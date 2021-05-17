@@ -9,7 +9,7 @@ from typing import List, Tuple, Dict
 Note = mido.Message
 Notes = List[Note]
 FlatNote = Tuple[int, Note]
-FlatNotes = Dict[int, FlatNote]
+FlatNotes = Dict[int, Tuple[FlatNote, bool]]
 Track = mido.MidiTrack
 Tracks = List[Track]
 PrioTracks = Dict[int, Track]
@@ -59,7 +59,7 @@ def track_to_abs_notes(track: mido.MidiTrack, is_percussion=False) -> FlatNotes:
                 adjusted_note = note.copy()
             else:
                 adjusted_note = note.copy(note=max(0,note.note-base))
-            ticks[t] = adjusted_note
+            ticks[t] = (adjusted_note, is_percussion)
     return ticks
 
 
@@ -93,7 +93,7 @@ def quantize_to_beat(notes: FlatNotes, quantize_to=-1) -> FlatNotes:
         if pool.get(t):
             final[t] = pool.pop(t)
         else:
-            final[t] = mido.Message(type='note_on', time=t, velocity=0)
+            final[t] = (mido.Message(type='note_on', time=t, velocity=0), False)
         t += quantize_to
     return final
 
@@ -119,6 +119,8 @@ def note_to_vox(note: int, vox_instr:str='n1', is_percussion=False) -> str:
             return "'s"
         elif note in (59, 46, 44, 42):  # ride, hi hats
             return "kk14"
+        elif note in (50, 48, 47, 45, 43, 41):  # toms
+            return 'd2+%d' % (5+(note-40)/2)
         elif note in (40, 38):  # snares
             return 'd1'
         elif note in (39, 30, 29):  # clap/scratch
@@ -146,10 +148,9 @@ def fn_to_vox(fn:str, q=-1) -> str:
     s= '^song ^bpm=%d' % get_bpm(f)
 
     for t in sorted(final.keys()):
-        note = final[t]
+        note, is_percussion = final[t]
         if note.velocity == 0:
             s += '.'
         else:
-
-            s += ' %s' % note_to_vox(note.note, 'n%d' % (note.channel))
+            s += ' %s' % note_to_vox(note.note, 'n%d' % (note.channel), is_percussion)
     return s
