@@ -8,8 +8,32 @@ from typing import List, Tuple, Dict
 
 Note = mido.Message
 Notes = List[Note]
-FlatNote = Tuple[int, Note]
-FlatNotes = Dict[int, Tuple[FlatNote, bool]]
+#FlatNote = Tuple[int, Note]
+
+class FlatNote:
+    t = 0
+    duration = 0
+    note = 0
+    channel = 0
+    instrument = 'n1'
+
+    def __init__(self, t:int, note:int=0, channel:int=0, is_percussion:bool=False):
+        self.t = t
+        self.duration = 0
+        self.note = note
+        self.channel = channel
+        self.is_percussion = is_percussion
+        self.instrument = 'n1'
+
+    def is_rest(self):
+        return self.duration == 0
+
+    def __str__(self):
+        return 'FN<t=%d-%d n%d c%d[%s] %s>' % (
+            self.t, self.t+self.duration, self.note, self.channel, self.instrument, 'D' if self.is_percussion else 'n'
+        )
+
+FlatNotes = Dict[int, FlatNote]
 Track = mido.MidiTrack
 Tracks = List[Track]
 PrioTracks = Dict[int, Track]
@@ -50,16 +74,26 @@ def track_to_abs_notes(track: mido.MidiTrack, is_percussion=False) -> FlatNotes:
             print("Using highest C - 24 as base instead: %d" % base)
 
     t = 0
+    instr = 'n1'
+    prevnote = FlatNote(0)
     ticks = dict()
     for note in notes:
         t += note.time
-        if note.type == 'note_on' and note.velocity > 0:
+        if note.type == 'program_change':
+            instr = get_vox_instrument(note.program)
+            print("Setting instrument for %s to %s" % (track.name, instr))
+        elif note.type == 'note_on' and note.velocity > 0:
             if is_percussion:
                 # do not scale note, we'll deal with it later
-                adjusted_note = note.copy()
+                adjusted_note = note.note
             else:
-                adjusted_note = note.copy(note=max(0,note.note-base))
-            ticks[t] = (adjusted_note, is_percussion)
+                adjusted_note = max(0, note.note-base)
+            prevnote = FlatNote(t, adjusted_note, note.channel, is_percussion)
+        elif ((note.type == 'note_on' and note.velocity == 0) or note.type == 'note_off') and prevnote.t not in ticks:
+            # note finished
+            prevnote.duration = t - prevnote.t
+            prevnote.instrument = instr
+            ticks[prevnote.t] = prevnote
     return ticks
 
 
@@ -68,7 +102,6 @@ def flatten_tracks(tracks: PrioTracks) -> FlatNotes:
     for prio in sorted(tracks.keys()):
         track = tracks[prio]
         flatnotes = track_to_abs_notes(track, is_percussion='Drum' in track.name or prio==99)
-        # TODO quantize here, or once flattened? CAN we quantize here?
         if not flatnotes:
             continue
         for t in sorted(flatnotes.keys()):
@@ -78,10 +111,6 @@ def flatten_tracks(tracks: PrioTracks) -> FlatNotes:
     return final
 
 
-def get_base_ticks(notes: FlatNotes, ticks_per_beat=192) -> int:
-    return functools.reduce(math.gcd, sorted(notes.keys()))
-
-
 def quantize_to_beat(notes: FlatNotes, quantize_to=-1) -> FlatNotes:
     if quantize_to <= 0:
         # find the most common distance between notes and quantize to that
@@ -89,14 +118,57 @@ def quantize_to_beat(notes: FlatNotes, quantize_to=-1) -> FlatNotes:
     t = 0
     final = {}
     pool = notes.copy()
-    while t < max(notes.keys()):
-        if pool.get(t):
-            final[t] = pool.pop(t)
+    while t < max(pool.keys()):
+        p2 = sorted(pool.copy())
+        for nt in sorted(p2):
+            n = pool[nt]
+            if nt+n.duration < t:
+                pool.pop(nt)
+        nt = sorted(pool)[0]
+        next_note = pool[nt]
+        if nt <= t < nt+next_note.duration:
+            # TODO could figure out durations better here
+        #if pool.get(t):
+            final[t] = next_note
+            pool.pop(nt)
         else:
-            final[t] = (mido.Message(type='note_on', time=t, velocity=0), False)
+            final[t] = FlatNote(t)
         t += quantize_to
     return final
 
+def get_vox_instrument(patch:int) -> str:
+    """Convert a general midi patch to a vox instrument"""
+    if patch <= 16:  # pianos n such
+        return 'n5'  # yossynote
+    elif patch <= 24: # organs
+        return 'n2'   # catnote
+    elif patch <= 29: # acoustic guitar
+        return 'n8'   # dantnote
+    elif patch <= 32: # electric guitar
+        return 'n4'   # dootnote
+    elif patch <= 40: # bass
+        return 'n10'  # slapnote
+    elif patch in (46, 59): # pizzicato, tuba
+        return 'n7'         # bupnote
+    elif patch <= 47: # string
+        return 'n13'   # shynote
+    elif patch == 48:  # timpani
+        return 'd2'    # kick
+    elif patch <= 52:  # strings
+        return 'n2'    # catnote
+    elif patch <= 55:  # choir
+        return 'n9'    # cursed downote
+    elif patch == 56:  # orch hit
+        return 'n12'   # orchnote
+    elif patch <= 72:  # brass
+        return 'n1'    # cnote
+    elif patch <= 80:  # winds
+        return 'n11'   # jarnote
+    elif patch in (116, 118, 119): # toms etc
+        return 'd2'    # kick
+    else:
+        # idk there are 11 kk notes just use those
+        return 'kk%d' % (1+int((patch-80)/(48/11)))
 
 def note_to_vox(note: int, vox_instr:str='n1', is_percussion=False) -> str:
     """Convert a note (length ignored) to a vox string"""
@@ -105,8 +177,10 @@ def note_to_vox(note: int, vox_instr:str='n1', is_percussion=False) -> str:
         '-10', '-9', '-9', '-8', '-7', '-7', '-6', '-5', '-4', '-3', '-2', '-', '',
         '+-', '+', '+2', '+3-', '+4-', '+5', '+6', '+7', '+8', '+9', '+10'
     ]
-    if note > len(scales):
+    if note >= len(scales):
         scale = '+10'
+    elif note < 0:
+        scale = '-10'
     else:
         scale = scales[note]
 
@@ -115,9 +189,9 @@ def note_to_vox(note: int, vox_instr:str='n1', is_percussion=False) -> str:
             return 'n3'
         elif note == 78:  # high cuica
             return 'n3+6'
-        if note in (81, 80, 70, 69, 54, 51):  # triangles, maracas, cabasa, tambourine, ride
+        if note in (81, 80, 70, 69, 54, 51, 46):  # triangles, maracas, cabasa, tambourine, ride, hi hat
             return "'s"
-        elif note in (59, 46, 44, 42):  # ride, hi hats
+        elif note in (59, 44, 42):  # ride, hi hats
             return "kk14"
         elif note in (50, 48, 47, 45, 43, 41):  # toms
             return 'd2+%d' % (5+(note-40)/2)
@@ -125,6 +199,8 @@ def note_to_vox(note: int, vox_instr:str='n1', is_percussion=False) -> str:
             return 'd1'
         elif note in (39, 30, 29):  # clap/scratch
             return 'd3'
+        elif note == 37:  # side stick
+            return 'kk12'
         elif note in (36, 35):   # bass drum
             return 'd2'
         else:
@@ -135,22 +211,53 @@ def note_to_vox(note: int, vox_instr:str='n1', is_percussion=False) -> str:
         return vox_instr + scale
 
 
-def fn_to_vox(fn:str, q=-1) -> str:
+def fn_to_vox(fn:str, quantize_to=-1) -> str:
     f = mido.MidiFile(fn)
-    prios = {}
+    bpm = get_bpm(f)
+    print("BPM: %d  Ticks per beat: %d" % (bpm, f.ticks_per_beat))
+    qs = {}
+    good_tracks = []
     for t in f.tracks:
+        qnotes = track_to_abs_notes(t)
+        if not qnotes:
+            continue
+        good_tracks.append(t)
+        q = functools.reduce(math.gcd, qnotes)
+        print("gcd of %s: %d" % (t.name, q))
+        if q not in qs:
+            qs[q] = 0
+        else:
+            qs[q] += 1
+    most_common_q = f.ticks_per_beat
+    print("qtr note: %d ticks" % most_common_q)
+    for k,v in qs.items():
+        if v == max(qs.values()):
+            most_common_q = k
+            break
+    note_length = 4*(f.ticks_per_beat/most_common_q)
+    print("Recommended q: %d (%dth notes)" % (most_common_q, note_length))
+    prios = {}
+    for t in good_tracks:
         n = input("Enter priority for Track `%s` (enter to skip, 99 for drums): " % t.name)
         if n:
             prios[int(n)] = t
     #prios = {i:n for i,n in enumerate(f.tracks)}
-    flat = flatten_tracks(prios)  # TODO need to still keep tracks separated so drums can be identified...
-    final = quantize_to_beat(flat, q)
-    s= '^song ^bpm=%d' % get_bpm(f)
+    flat = flatten_tracks(prios)
+    if quantize_to <= 0:
+        quantize_to = most_common_q
+    final = quantize_to_beat(flat, quantize_to)
+    s= '^song ^bpm=%d ^l=%d' % (bpm, note_length)
 
     for t in sorted(final.keys()):
-        note, is_percussion = final[t]
-        if note.velocity == 0:
+        note = final[t]
+        if note.is_rest():
             s += '.'
         else:
-            s += ' %s' % note_to_vox(note.note, 'n%d' % (note.channel), is_percussion)
+            # todo should inspect original tracks for channel patch info
+            voxnote = note.instrument
+            note_s = note_to_vox(note.note, voxnote, note.is_percussion)
+            if note_s:
+                s += ' ' + note_s
+        if len(s) > 1000:
+            break
     return s
