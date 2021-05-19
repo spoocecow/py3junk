@@ -54,6 +54,13 @@ def get_track_names(midi: mido.MidiFile) -> list:
     return [t.name for t in midi.tracks]
 
 
+def get_track_patch(track: mido.MidiTrack) -> int:
+    for n in track:
+        if not n.is_meta and n.type == 'program_change':
+            return n.program
+    return -1
+
+
 def track_to_abs_notes(track: mido.MidiTrack, is_percussion=False) -> FlatNotes:
     """Flatten track notes into absolute time and relative values"""
     notes = [msg for msg in track if not msg.is_meta]
@@ -77,18 +84,29 @@ def track_to_abs_notes(track: mido.MidiTrack, is_percussion=False) -> FlatNotes:
     instr = 'n1'
     prevnote = FlatNote(0)
     ticks = dict()
+    its_drums = is_percussion
     for note in notes:
         t += note.time
         if note.type == 'program_change':
-            instr = get_vox_instrument(note.program)
-            print("Setting instrument for %s to %s" % (track.name, instr))
+            print("lala", note)
+            if note.channel == 9 or note.program == 0:
+                print("WOW ITS DRUMS")
+                its_drums = True
+                instr = '<drums>'
+            else:
+                instr = get_vox_instrument(note.program)
+            print("Setting instrument for %s (channel %d) to %s" % (track.name, note.channel, instr))
+        elif note.type == 'control_change' and note.channel == 9:
+            print("it's drums")
+            its_drums = True
+            instr = '<drum>'
         elif note.type == 'note_on' and note.velocity > 0:
-            if is_percussion:
+            if its_drums:
                 # do not scale note, we'll deal with it later
                 adjusted_note = note.note
             else:
                 adjusted_note = max(0, note.note-base)
-            prevnote = FlatNote(t, adjusted_note, note.channel, is_percussion)
+            prevnote = FlatNote(t, adjusted_note, note.channel, its_drums)
         elif ((note.type == 'note_on' and note.velocity == 0) or note.type == 'note_off') and prevnote.t not in ticks:
             # note finished
             prevnote.duration = t - prevnote.t
@@ -193,6 +211,8 @@ def note_to_vox(note: int, vox_instr:str='n1', is_percussion=False) -> str:
             return "'s"
         elif note in (59, 44, 42):  # ride, hi hats
             return "kk14"
+        elif note in (57, 49):  # crash cymbals
+            return 'kk14-10'
         elif note in (50, 48, 47, 45, 43, 41):  # toms
             return 'd2+%d' % (5+(note-40)/2)
         elif note in (40, 38):  # snares
@@ -238,10 +258,9 @@ def fn_to_vox(fn:str, quantize_to=-1) -> str:
     print("Recommended q: %d (%dth notes)" % (most_common_q, note_length))
     prios = {}
     for t in good_tracks:
-        n = input("Enter priority for Track `%s` (enter to skip, 99 for drums): " % t.name)
+        n = input("Enter priority for Track `%s` patch %d (enter to skip, 99 for drums): " % (t.name, get_track_patch(t)))
         if n:
             prios[int(n)] = t
-    #prios = {i:n for i,n in enumerate(f.tracks)}
     flat = flatten_tracks(prios)
     if quantize_to <= 0:
         quantize_to = most_common_q
@@ -253,7 +272,6 @@ def fn_to_vox(fn:str, quantize_to=-1) -> str:
         if note.is_rest():
             s += '.'
         else:
-            # todo should inspect original tracks for channel patch info
             voxnote = note.instrument
             note_s = note_to_vox(note.note, voxnote, note.is_percussion)
             if note_s:
