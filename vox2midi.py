@@ -4,11 +4,10 @@ import functools
 import itertools
 import math
 import mido
-from typing import List, Tuple, Dict
+from typing import List, Dict
 
 Note = mido.Message
 Notes = List[Note]
-#FlatNote = Tuple[int, Note]
 
 class FlatNote:
     t = 0
@@ -89,15 +88,13 @@ def track_to_abs_notes(track: mido.MidiTrack, is_percussion=False) -> FlatNotes:
         t += note.time
         if note.type == 'program_change':
             print("lala", note)
-            if note.channel == 9 or note.program == 0:
-                print("WOW ITS DRUMS")
+            if note.channel == 9:
                 its_drums = True
                 instr = '<drums>'
             else:
-                instr = get_vox_instrument(note.program)
+                instr = get_vox_instrument(note.program+1)
             print("Setting instrument for %s (channel %d) to %s" % (track.name, note.channel, instr))
         elif note.type == 'control_change' and note.channel == 9:
-            print("it's drums")
             its_drums = True
             instr = '<drum>'
         elif note.type == 'note_on' and note.velocity > 0:
@@ -207,9 +204,9 @@ def note_to_vox(note: int, vox_instr:str='n1', is_percussion=False) -> str:
             return 'n3'
         elif note == 78:  # high cuica
             return 'n3+6'
-        if note in (81, 80, 70, 69, 54, 51, 46):  # triangles, maracas, cabasa, tambourine, ride, hi hat
+        if note in (82, 81, 70, 69, 54, 51, 46):  # triangle, maracas, cabasa, tambourine, ride, hi hat
             return "'s"
-        elif note in (59, 44, 42):  # ride, hi hats
+        elif note in (80, 59, 44, 42):  # mute triangle, ride, hi hats
             return "kk14"
         elif note in (57, 49):  # crash cymbals
             return 'kk14-10'
@@ -255,27 +252,65 @@ def fn_to_vox(fn:str, quantize_to=-1) -> str:
             most_common_q = k
             break
     note_length = 4*(f.ticks_per_beat/most_common_q)
-    print("Recommended q: %d (%dth notes)" % (most_common_q, note_length))
+    print("Detected q: %d (%dth notes)" % (most_common_q, note_length))
+    q_log2 = math.log(note_length,2)
+    if q_log2 != math.trunc(q_log2):
+        note_length = 2**math.trunc(q_log2)
+        most_common_q = 4*f.ticks_per_beat/note_length
+        #note_length = 4*(f.ticks_per_beat/most_common_q)
+        print("Rounding detected to longer power of 2: %d (%dth notes)" % (most_common_q, note_length))
+    if quantize_to <= 0:
+        quantize_to = most_common_q
+    note_length = 4*(f.ticks_per_beat/quantize_to)
+    print("Applied q: %d (%dth notes)" % (quantize_to, note_length))
+    if note_length > 32:
+        bpm = bpm * (note_length / 32)
+        print("Too tiny notes, increasing bpm to %d" % bpm)
+        note_length = 32
     prios = {}
     for t in good_tracks:
         n = input("Enter priority for Track `%s` patch %d (enter to skip, 99 for drums): " % (t.name, get_track_patch(t)))
         if n:
             prios[int(n)] = t
     flat = flatten_tracks(prios)
-    if quantize_to <= 0:
-        quantize_to = most_common_q
+
     final = quantize_to_beat(flat, quantize_to)
     s= '^song ^bpm=%d ^l=%d' % (bpm, note_length)
 
+    lastinst = ''
     for t in sorted(final.keys()):
         note = final[t]
         if note.is_rest():
-            s += '.'
+            if lastinst:
+                s += '.'
+            else:
+                # don't add rests at start like a lot of annoying midis do >:C
+                pass
         else:
             voxnote = note.instrument
+            # if voxnote == lastinst:
+            #     voxnote = '*'
+            # else:
+            #     lastinst = voxnote
             note_s = note_to_vox(note.note, voxnote, note.is_percussion)
             if note_s:
                 s += ' ' + note_s
         if len(s) > 1000:
             break
     return s
+
+def fast(fn, q=-1):
+    with open(r"C:\tmp\vox.txt", "w") as f:
+        f.write( fn_to_vox(fn, q) + '\n' )
+
+import sys
+
+if __name__ == "__main__":
+    if len(sys.argv) == 2:
+        fast(sys.argv[1])
+    elif len(sys.argv) == 3:
+        fast(sys.argv[1], int(sys.argv[2]))
+    else:
+        fn = input("filename NOW:").strip('"')
+        q = input("q?") or '0'
+        fast(fn, int(q))
