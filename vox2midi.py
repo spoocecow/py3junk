@@ -288,6 +288,7 @@ def fn_to_vox(fn:str, quantize_to=-1) -> str:
                 pass
         else:
             voxnote = note.instrument
+            lastinst = voxnote
             # if voxnote == lastinst:
             #     voxnote = '*'
             # else:
