@@ -2,6 +2,7 @@
 it's midi parsing. 1.1 spec thx https://www.cs.cmu.edu/~music/cmsip/readings/Standard-MIDI-file-format-updated.pdf
 spoocecow 2021
 """
+import sys
 from typing import List, Dict
 
 class IBuf(bytes):
@@ -181,8 +182,13 @@ class MidiFile:
                 if msg.what not in (MidiNote.NOTE_ON, MidiNote.NOTE_OFF):
                     continue
                 if msg.what == MidiNote.NOTE_OFF and last_msg and last_msg.what == MidiNote.NOTE_ON:
-                    # todo this won't represent note fadeouts correctly I don't think. not sure what to do there
+                    # todo this won't represent note fadeouts correctly I don't think. not sure what to do there unless the next thing solves it
                     last_msg.dur = msg.t - last_msg.t
+                elif msg.what == MidiNote.NOTE_ON and last_msg and last_msg.what == MidiNote.NOTE_ON:
+                    # uhh note change? velocity change? two ons in a row... ignore?
+                    # or is this how consecutive notes are represented? aggg ohhhh oaaagg
+                    if msg.note == last_msg.note:
+                        continue
                 flattened.append(msg)
                 last_msg = msg
             # make sure the last note in the channel has duration too
@@ -221,6 +227,7 @@ class MidiFile:
                 # sysex event, don't care, skip past
                 chunk_data.read()  # throw away peeked byte
                 event_len = chunk_data.read_vlq()
+                print("skipping %d bytes of sysex data" % event_len)
                 sysex_data = chunk_data.read_bytes(event_len)  # throw away sysex event
                 if sysex_data[-1] != 0xF7:
                     print("against spec or I f'ed up: sysex data doesn't end with 0xf7")
@@ -254,6 +261,7 @@ class MidiFile:
         assert chunk_data.read() == 0xFF, "No meta FF byte"
         meta_type = chunk_data.read()
         meta_len = chunk_data.read_vlq()
+        print("meta: type:%x len:%d" % (meta_type, meta_len))
         meta_data = chunk_data.read_bytes(meta_len)
         if meta_type == 0x2F:
             # end of track
@@ -273,6 +281,8 @@ class MidiFile:
     def _process_midi_event(self, delta_time:int, event_data: IBuf):
         status = event_data.read()
         code = (status & 0xF0) >> 4
+        if code & 0x8 != 0x8:
+            print("uhh status:%0x" % status)
         channel = status & 0x0F
         #print("track:%d stat:%0x code:%0x chan:%d" % (self._current_track, status, code, channel))
         msg = MidiNote()
@@ -338,3 +348,8 @@ class MidiFile:
         self.messages[self._current_track].append( msg )
         self.channels[channel].append( msg )
 
+
+if __name__ == "__main__":
+    f = MidiFile(sys.argv[2])
+    f.parse()
+    f.to_simplynotes()

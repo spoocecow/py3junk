@@ -27,6 +27,16 @@ class FlatNote:
     def is_rest(self):
         return self.duration == 0
 
+    def same_voxstr(self, other):
+        assert isinstance(other, FlatNote)
+        return note_to_vox(self.note, self.instrument, self.is_percussion) == note_to_vox(other.note, other.instrument, other.is_percussion)
+        # return (
+        #         self.note == other.note and
+        #         self.instrument == other.instrument and
+        #         self.is_percussion == other.is_percussion and
+        #         self.channel == other.channel
+        # )
+
     def __str__(self):
         return 'FN<t=%d-%d n%d c%d[%s] %s>' % (
             self.t, self.t+self.duration, self.note, self.channel, self.instrument, 'D' if self.is_percussion else 'n'
@@ -87,13 +97,14 @@ def track_to_abs_notes(track: mido.MidiTrack, is_percussion=False) -> FlatNotes:
     for note in notes:
         t += note.time
         if note.type == 'program_change':
-            print("lala", note)
+            #print("lala", note)
             if note.channel == 9:
                 its_drums = True
                 instr = '<drums>'
             else:
                 instr = get_vox_instrument(note.program+1)
-            print("Setting instrument for %s (channel %d) to %s" % (track.name, note.channel, instr))
+                its_drums = False
+            #print("Setting instrument for %s (channel %d) to %s" % (track.name, note.channel, instr))
         elif note.type == 'control_change' and note.channel == 9:
             its_drums = True
             instr = '<drum>'
@@ -115,6 +126,7 @@ def track_to_abs_notes(track: mido.MidiTrack, is_percussion=False) -> FlatNotes:
 def flatten_tracks(tracks: PrioTracks) -> FlatNotes:
     final = dict()
     for prio in sorted(tracks.keys()):
+        print(prio, tracks[prio].name)
         track = tracks[prio]
         flatnotes = track_to_abs_notes(track, is_percussion='Drum' in track.name or prio==99)
         if not flatnotes:
@@ -134,6 +146,8 @@ def quantize_to_beat(notes: FlatNotes, quantize_to=-1) -> FlatNotes:
     final = {}
     pool = notes.copy()
     while t < max(pool.keys()):
+        if len(final) > 600:
+            break
         p2 = sorted(pool.copy())
         for nt in sorted(p2):
             n = pool[nt]
@@ -141,11 +155,15 @@ def quantize_to_beat(notes: FlatNotes, quantize_to=-1) -> FlatNotes:
                 pool.pop(nt)
         nt = sorted(pool)[0]
         next_note = pool[nt]
+
         if nt <= t < nt+next_note.duration:
             # TODO could figure out durations better here
-        #if pool.get(t):
             final[t] = next_note
             pool.pop(nt)
+            # if next_note in final.values():
+            #     final[t] = FlatNote(t)
+            # else:
+            #     final[t] = next_note
         else:
             final[t] = FlatNote(t)
         t += quantize_to
@@ -192,111 +210,150 @@ def note_to_vox(note: int, vox_instr:str='n1', is_percussion=False) -> str:
         '-10', '-9', '-9', '-8', '-7', '-7', '-6', '-5', '-4', '-3', '-2', '-', '',
         '+-', '+', '+2', '+3-', '+4-', '+5', '+6', '+7', '+8', '+9', '+10'
     ]
-    if note >= len(scales):
-        scale = '+10'
-    elif note < 0:
-        scale = '-10'
-    else:
-        scale = scales[note]
-
-    if is_percussion:
-        if note == 79:  # low cuica
-            return 'n3'
-        elif note == 78:  # high cuica
-            return 'n3+6'
-        if note in (82, 81, 70, 69, 54, 51, 46):  # triangle, maracas, cabasa, tambourine, ride, hi hat
-            return "'s"
-        elif note in (80, 59, 44, 42):  # mute triangle, ride, hi hats
-            return "kk14"
-        elif note in (57, 49):  # crash cymbals
-            return 'kk14-10'
-        elif note in (50, 48, 47, 45, 43, 41):  # toms
-            return 'd2+%d' % (5+(note-40)/2)
-        elif note in (40, 38):  # snares
-            return 'd1'
-        elif note in (39, 30, 29):  # clap/scratch
-            return 'd3'
-        elif note == 37:  # side stick
-            return 'kk12'
-        elif note in (36, 35):   # bass drum
-            return 'd2'
+    if not is_percussion:
+        if note >= len(scales):
+            scale = '+10'
+        elif note < 0:
+            scale = '-10'
         else:
-            # probably not important
-            print("No note for percussion: %d" % note)
-            return ''
-    else:
+            scale = scales[note]
+
         return vox_instr + scale
 
+    # special percussion handlin waow
+    if note == 79:  # low cuica
+        return 'n3'
+    elif note == 78:  # high cuica
+        return 'n3+6'
+    if note in (82, 81, 70, 69, 54, 51, 46):  # triangle, maracas, cabasa, tambourine, ride, hi hat
+        return "'s"
+    elif note in (80, 59, 44, 42):  # mute triangle, ride, hi hats
+        return "kk14"
+    elif note in (57, 49):  # crash cymbals
+        return 'kk14-10'
+    elif note in (50, 48, 47, 45, 43, 41):  # toms
+        return 'd2+%d' % (5+(note-40)/2)
+    elif note in (40, 38):  # snares
+        return 'd1'
+    elif note in (39, 30, 29):  # clap/scratch
+        return 'd3'
+    elif note == 37:  # side stick
+        return 'kk12'
+    elif note in (36, 35):   # bass drum
+        return 'd2'
+    else:
+        # probably not important
+        print("No note for percussion: %d" % note)
+        return ''
 
-def fn_to_vox(fn:str, quantize_to=-1) -> str:
-    f = mido.MidiFile(fn)
-    bpm = get_bpm(f)
-    print("BPM: %d  Ticks per beat: %d" % (bpm, f.ticks_per_beat))
+
+def get_final_bpm(tracks: Tracks, main_bpm: int, ticks_per_beat: int=120, quantize_override: int=-1):
+    """
+    Get final bpm to quantize vox notes to. Main bpm is used as a hint,
+    but final determination tries to use the smallest base note
+    (e.g. bpm=120 with all qtr notes will quantize differently than
+          bpm=120 with all 16th notes)
+    :param tracks: midi note tracks
+    :param main_bpm: midi starting bpm
+    :param ticks_per_beat: ticks per qtr note
+    :param quantize_override: manual setting for quantization to override wonky detection
+    :return: final bpm and note length for vox
+    """
     qs = {}
-    good_tracks = []
-    for t in f.tracks:
+    for t in tracks:
         qnotes = track_to_abs_notes(t)
         if not qnotes:
             continue
-        good_tracks.append(t)
         q = functools.reduce(math.gcd, qnotes)
         print("gcd of %s: %d" % (t.name, q))
         if q not in qs:
             qs[q] = 0
         else:
             qs[q] += 1
-    most_common_q = f.ticks_per_beat
+    most_common_q = ticks_per_beat
     print("qtr note: %d ticks" % most_common_q)
     for k,v in qs.items():
         if v == max(qs.values()):
             most_common_q = k
             break
-    note_length = 4*(f.ticks_per_beat/most_common_q)
+    note_length = 4*(ticks_per_beat/most_common_q)
     print("Detected q: %d (%dth notes)" % (most_common_q, note_length))
     q_log2 = math.log(note_length,2)
     if q_log2 != math.trunc(q_log2):
         note_length = 2**math.trunc(q_log2)
-        most_common_q = 4*f.ticks_per_beat/note_length
-        #note_length = 4*(f.ticks_per_beat/most_common_q)
+        most_common_q = 4*ticks_per_beat/note_length
         print("Rounding detected to longer power of 2: %d (%dth notes)" % (most_common_q, note_length))
-    if quantize_to <= 0:
+    if quantize_override > 0:
+        quantize_to = quantize_override
+    else:
         quantize_to = most_common_q
-    note_length = 4*(f.ticks_per_beat/quantize_to)
+    note_length = 4*(ticks_per_beat/quantize_to)
     print("Applied q: %d (%dth notes)" % (quantize_to, note_length))
     if note_length > 32:
-        bpm = bpm * (note_length / 32)
-        print("Too tiny notes, increasing bpm to %d" % bpm)
+        main_bpm = main_bpm * (note_length / 32)
+        print("Too tiny notes, increasing bpm to %d" % main_bpm)
         note_length = 32
+    return main_bpm, note_length, quantize_to
+
+def fn_to_vox(fn:str, quantize_to=-1) -> str:
+    f = mido.MidiFile(fn)
+    bpm = get_bpm(f)
+    print("BPM: %d  Ticks per beat: %d" % (bpm, f.ticks_per_beat))
+    bpm, note_length, quantize_to = get_final_bpm(f.tracks, bpm, f.ticks_per_beat, quantize_to)
+    print("Final BPM: %d  Note len: %d  Quantizing to: %d" % (bpm, note_length, quantize_to))
+
+    good_tracks = []
+    for t in f.tracks:
+        qnotes = track_to_abs_notes(t)
+        if not qnotes:
+            continue
+        good_tracks.append(t)
+
     prios = {}
-    for t in good_tracks:
-        n = input("Enter priority for Track `%s` patch %d (enter to skip, 99 for drums): " % (t.name, get_track_patch(t)))
-        if n:
+    n = 0
+    for ti, t in enumerate(good_tracks):
+        if n >= 0:
+            n = input("Enter priority for Track `%s` patch %d (enter to skip, -1 to auto): " % (t.name, get_track_patch(t)))
+            if n:
+                n = int(n)
+            else:
+                n = 0
+                continue
+        if n < 0:
+            prios[ti] = t
+        elif n:
             prios[int(n)] = t
     flat = flatten_tracks(prios)
 
     final = quantize_to_beat(flat, quantize_to)
     s= '^song ^bpm=%d ^l=%d' % (bpm, note_length)
 
-    lastinst = ''
+    lastnote = None
     for t in sorted(final.keys()):
         note = final[t]
         if note.is_rest():
-            if lastinst:
+            if lastnote:
+                if s[-1] not in ' .':
+                    s += ' '
                 s += '.'
             else:
                 # don't add rests at start like a lot of annoying midis do >:C
                 pass
         else:
-            voxnote = note.instrument
-            lastinst = voxnote
-            # if voxnote == lastinst:
-            #     voxnote = '*'
-            # else:
-            #     lastinst = voxnote
-            note_s = note_to_vox(note.note, voxnote, note.is_percussion)
+            if lastnote and note.same_voxstr(lastnote):
+                note_s = '*'
+            elif lastnote and lastnote.instrument == note.instrument:
+                note_s = note_to_vox(note.note, '*', note.is_percussion)
+                if note_s == '*':
+                    # reset to middle C needs +0
+                    note_s = '*+0'
+            else:
+                note_s = note_to_vox(note.note, note.instrument, note.is_percussion)
             if note_s:
+                print(note_s + ' ', end='')
                 s += ' ' + note_s
-        if len(s) > 1000:
+                lastnote = note
+        if len(s) > 500:
             break
     return s
 
@@ -312,6 +369,6 @@ if __name__ == "__main__":
     elif len(sys.argv) == 3:
         fast(sys.argv[1], int(sys.argv[2]))
     else:
-        fn = input("filename NOW:").strip('"')
-        q = input("q?") or '0'
-        fast(fn, int(q))
+        filename = input( "filename NOW:" ).strip( '"' )
+        q_hint = input( "q?" ) or '0'
+        fast( filename, int( q_hint ) )
