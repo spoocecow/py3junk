@@ -99,12 +99,12 @@ def prompt_for_resolution(midi: funmid.SimplyNotes, selected_tracks: List[int]) 
       gcds[gcd] += 1
       print("Track #{n}: q={q}".format(n=track_i, q=gcd))
    _, most_common_ticks = majority(gcds)
-   note_length = 4 * (midi.ticks_per_beat/most_common_ticks)
+   note_length = int(4 * (midi.ticks_per_beat/most_common_ticks))
    print("BPM: {bpm} Detected q: {q} ({nlen}th notes)".format(bpm=midi.bpm, q=most_common_ticks, nlen=note_length))
-   q_log2 = math.log(note_length)
+   q_log2 = math.log(note_length, 2)
    if q_log2 != math.trunc(q_log2):
-      note_length = 2**math.trunc(q_log2)
-      most_common_ticks = 4*midi.ticks_per_beat/note_length
+      note_length = int(2**math.trunc(q_log2))
+      most_common_ticks = int(4*midi.ticks_per_beat/note_length)
       logging.warning("Rounding detected to longer power of 2: {q} ({nlen}th notes)".format(q=most_common_ticks, nlen=note_length))
    inp = input("Input desired resolution, or hit Enter to accept default ({q}): ".format(q=most_common_ticks))
    if inp:
@@ -164,10 +164,10 @@ def scale(midi: funmid.SimplyNotes, track_priority: List[int], time_slice: Tuple
       if high - base > 25:
          # possibly too wide of a range to capture melody :/
          highest_c = int(math.ceil(high/12.0))*12
-         logging.info(f"GUP BOH, too big range in track #{track_n} [{low}-{high}] (C range {lowest_c}-{highest_c})")
+         logging.debug(f"GUP BOH, too big range in track #{track_n} [{low}-{high}] (C range {lowest_c}-{highest_c})")
          if highest_c - high < low - lowest_c:
             base = highest_c - 24
-            logging.info(f"Using (high C - 24) [{base}] as base instead")
+            logging.debug(f"Using (high C - 24) [{base}] as base instead")
       # copy notes using adjusted base (and time slice)
       #new_notes = [old.copy(note=max(0, old.note-base)) for old in original_notes if time_start <= old.t <= time_end]
       new_notes = []
@@ -176,7 +176,7 @@ def scale(midi: funmid.SimplyNotes, track_priority: List[int], time_slice: Tuple
          if old.what == funmid.MidiNote.NOTE_ON and time_start <= old.t <= time_end and old.t not in track_ticks:
             nv = max(0, old.note-base)
             new = old.copy(note=nv)
-            logging.info("Adjusting %s to new value %d -> %s", old, nv, new)
+            #logging.info("Adjusting %s to new value %d -> %s", old, nv, new)
             new_notes.append(new)
             track_ticks.append(old.t)
       final.extend(new_notes)
@@ -237,7 +237,7 @@ def get_vox_instrument(note: funmid.MidiNote) -> str:
    """Convert a general midi patch to a vox instrument"""
    if note.is_drums():
       return '<drums>'
-   patch = note.patch
+   patch = note.patch + 1
    if patch <= 16:  # pianos n such
       return 'n5'  # yossynote
    elif patch <= 24: # organs
@@ -354,7 +354,7 @@ def build_voxstr(notes: FlatNotes, bpm:int, note_len: int) -> str:
 
 
 def main(fn=r"ta-poochie.mid"):
-   logging.basicConfig(level=logging.DEBUG)
+   logging.basicConfig(level=logging.INFO)
    midifile = funmid.MidiFile(fn)
    midi = midifile.to_simplynotes()
 
@@ -363,8 +363,8 @@ def main(fn=r"ta-poochie.mid"):
    print('='*40)
    friendly_print(midi)
    trax = prompt_for_tracks(midi)
-   tick_quantize = prompt_for_resolution(midi, trax)
    time_slice = prompt_for_time_slice(midi, trax)
+   tick_quantize = prompt_for_resolution(scale(midi, trax, time_slice), trax)
 
    # do some sanity checkin'
    min_note_length = int(4*(midi.ticks_per_beat/tick_quantize))

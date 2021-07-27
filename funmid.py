@@ -98,6 +98,8 @@ class MidiNote:
         self.velocity = 0
 
     def __repr__(self):
+        if self.is_rest():
+            return '<N -- >'
         return '<N%0x t%d c%d>' % (self.what, self.t, self.channel)
 
     def __str__(self):
@@ -666,7 +668,7 @@ def midi_instrument_to_str(patch: int) -> str:
         115: "Steel Drums",
         116: "Woodblock",
         117: "Taiko Drum",
-        118: "Melodic Tom ",
+        118: "Melodic Tom",
         119: "Synth Drum",
         120: "Reverse Cymbal",
         121: "Guitar Fret Noise",
