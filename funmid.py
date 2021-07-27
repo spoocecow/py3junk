@@ -108,11 +108,17 @@ class MidiNote:
         else:
             return repr(self)
 
+    def __lt__(self, other):
+        return self.t < other.t
+
     def is_drums(self):
         return self.channel == 9
 
     def is_rest(self):
         return self.what == MidiNote.EMPTY
+
+    def is_edge(self):
+        return self.what in (MidiNote.NOTE_ON, MidiNote.NOTE_OFF)
 
     def copy(self, **kwargs):
         """
@@ -123,6 +129,8 @@ class MidiNote:
         other = MidiNote()
         for field, value in vars(self).items():
             setattr(other, field, value)
+        assert self.what == other.what
+        assert str(self) == str(other)
         for field, value in kwargs.items():
             setattr(other, field, value)
         return other
@@ -213,7 +221,7 @@ class SimplyNotes:
         :param kwargs: fields/values to override on the new collection
         :return: new collection
         """
-        other = SimplyNotes(self.notes, self.track_names, self.channel_names, self.bpm, self.ticks_per_beat)
+        other = SimplyNotes(self.notes.copy(), self.track_names, self.channel_names, self.bpm, self.ticks_per_beat)
         for field, value in kwargs.items():
             setattr(other, field, value)
         other.__cleanup()
@@ -278,7 +286,8 @@ class MidiFile:
         for c in self.channels:
             last_msg = None
             for msg in self.channels[c]:
-                if msg.what not in (MidiNote.NOTE_ON, MidiNote.NOTE_OFF):
+                assert isinstance(msg, MidiNote)
+                if not msg.is_edge():
                     continue
                 if msg.what == MidiNote.NOTE_OFF and last_msg and last_msg.what == MidiNote.NOTE_ON:
                     # todo this won't represent note fadeouts correctly I don't think. not sure what to do there unless the next thing solves it
@@ -424,14 +433,16 @@ class MidiFile:
         elif meta_type == 0x2F:
             # end of track
             assert meta_len == 0
-            logging.info("End of track", self._current_track)
+            logging.info("End of track %d", self._current_track)
         elif meta_type == 0x51:
             # tempo change
             assert meta_len == 3
             # represented in microseconds per MIDI quarter-note
             # (aka 24ths of a microsecond per MIDI clock)
             us_per_midi_qtr_note = meta_data.read_int(3)
-            logging.info("Tempo change: %d us / qtr note", us_per_midi_qtr_note)
+            # todo this doesn't acct for mid-file tempo changes
+            self.bpm = int(60 * (1e6 / us_per_midi_qtr_note))
+            logging.info("Tempo change: %d us / qtr note = %d bpm", us_per_midi_qtr_note, self.bpm)
         elif meta_type == 0x54:
             # SMPTE offset
             assert meta_len == 5

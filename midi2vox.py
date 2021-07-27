@@ -94,13 +94,13 @@ def prompt_for_resolution(midi: funmid.SimplyNotes, selected_tracks: List[int]) 
    for track_i, track in sorted(midi.by_track().items()):
       if track_i not in selected_tracks:
          continue
-      times = (note.t for note in track)
+      times = (note.t for note in track if note.is_edge())
       gcd = functools.reduce(math.gcd, times)
       gcds[gcd] += 1
       print("Track #{n}: q={q}".format(n=track_i, q=gcd))
    _, most_common_ticks = majority(gcds)
    note_length = 4 * (midi.ticks_per_beat/most_common_ticks)
-   print("Detected q: {q} ({nlen}th notes)".format(q=most_common_ticks, nlen=note_length))
+   print("BPM: {bpm} Detected q: {q} ({nlen}th notes)".format(bpm=midi.bpm, q=most_common_ticks, nlen=note_length))
    q_log2 = math.log(note_length)
    if q_log2 != math.trunc(q_log2):
       note_length = 2**math.trunc(q_log2)
@@ -122,7 +122,7 @@ def prompt_for_time_slice(midi: funmid.SimplyNotes, selected_tracks: List[int]) 
    for track_i, track in sorted(midi.by_track().items()):
       if track_i not in selected_tracks:
          continue
-      times = [note.t for note in track if note.what in (funmid.MidiNote.NOTE_ON, funmid.MidiNote.NOTE_OFF)]
+      times = [note.t for note in track if note.is_edge()]
       min_t = min(min_t, min(times))
       max_t = max(max_t, max(times))
    min_final = min_t
@@ -150,7 +150,7 @@ def scale(midi: funmid.SimplyNotes, track_priority: List[int], time_slice: Tuple
          continue
       if funmid.is_percussion(original_notes):
          # do not adjust percussion, just do time slicing
-         new_notes = [old for old in original_notes if time_start <= old.t <= time_end]
+         new_notes = [old for old in original_notes if old.what == funmid.MidiNote.NOTE_ON and time_start <= old.t <= time_end]
          final.extend(new_notes)
          continue
 
@@ -164,12 +164,21 @@ def scale(midi: funmid.SimplyNotes, track_priority: List[int], time_slice: Tuple
       if high - base > 25:
          # possibly too wide of a range to capture melody :/
          highest_c = int(math.ceil(high/12.0))*12
-         logging.warning(f"GUP BOH, too big range in track #{track_n} [{low}-{high}] (C range {lowest_c}-{highest_c})")
+         logging.info(f"GUP BOH, too big range in track #{track_n} [{low}-{high}] (C range {lowest_c}-{highest_c})")
          if highest_c - high < low - lowest_c:
             base = highest_c - 24
-            print(f"Using (high C - 24) [{base}] as base instead")
+            logging.info(f"Using (high C - 24) [{base}] as base instead")
       # copy notes using adjusted base (and time slice)
-      new_notes = [old.copy(note=max(0, old.note-base)) for old in original_notes if time_start <= old.t <= time_end]
+      #new_notes = [old.copy(note=max(0, old.note-base)) for old in original_notes if time_start <= old.t <= time_end]
+      new_notes = []
+      track_ticks = list()
+      for old in sorted(original_notes, key=lambda n: n.t):
+         if old.what == funmid.MidiNote.NOTE_ON and time_start <= old.t <= time_end and old.t not in track_ticks:
+            nv = max(0, old.note-base)
+            new = old.copy(note=nv)
+            logging.info("Adjusting %s to new value %d -> %s", old, nv, new)
+            new_notes.append(new)
+            track_ticks.append(old.t)
       final.extend(new_notes)
    return midi.copy(notes=final)
 
@@ -220,7 +229,8 @@ def crunch(midi: funmid.SimplyNotes, track_priority: List[int], tick_quantize: i
    """
    scale_corrected_notes = scale(midi, track_priority, time_slice)
    flat_notes = flatten(scale_corrected_notes, track_priority)
-   return quantize_to_beat(flat_notes, tick_quantize)
+   quant = quantize_to_beat(flat_notes, tick_quantize)
+   return quant
 
 
 def get_vox_instrument(note: funmid.MidiNote) -> str:
@@ -327,7 +337,7 @@ def build_voxstr(notes: FlatNotes, bpm:int, note_len: int) -> str:
       else:
          if lastnote and note_to_vox(note) == note_to_vox(lastnote):
             note_s = '*'
-         elif lastnote and get_vox_instrument(note) == get_vox_instrument(note):
+         elif lastnote and get_vox_instrument(note) == get_vox_instrument(lastnote):
             note_s = get_vox_pitch(note.note, '*', note.is_drums())
             if note_s == '*':
                # reset to middle C needs +0
@@ -342,7 +352,9 @@ def build_voxstr(notes: FlatNotes, bpm:int, note_len: int) -> str:
          break
    return s
 
+
 def main(fn=r"ta-poochie.mid"):
+   logging.basicConfig(level=logging.DEBUG)
    midifile = funmid.MidiFile(fn)
    midi = midifile.to_simplynotes()
 
@@ -355,19 +367,19 @@ def main(fn=r"ta-poochie.mid"):
    time_slice = prompt_for_time_slice(midi, trax)
 
    # do some sanity checkin'
-   min_note_length = 4*(midi.ticks_per_beat/tick_quantize)
+   min_note_length = int(4*(midi.ticks_per_beat/tick_quantize))
    if min_note_length > 32:
-      midi.bpm *= (min_note_length/32)
+      midi.bpm = int(midi.bpm * (min_note_length/32))
       min_note_length = 32
       print("Notes are too short, increasing bpm to {bpm}".format(bpm=midi.bpm))
    if midi.bpm > 480:
-      tick_quantize *= (midi.bpm/480)
+      tick_quantize = int( tick_quantize * (midi.bpm/480) )
       midi.bpm = 480
       print("BPM too high, increasing tick quantization to {q}".format(q=tick_quantize))
 
    # Param processing done, time to build voxstr
    final_notes = crunch(midi, trax, tick_quantize, time_slice)
-   voxstr = build_voxstr(final_notes, midi.bpm, min_note_length)
+   voxstr = build_voxstr(final_notes, int(midi.bpm), min_note_length)
 
    return voxstr
 
