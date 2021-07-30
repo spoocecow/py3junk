@@ -12,6 +12,8 @@ class IBuf(bytes):
 
     index = 0
 
+    OverrunError = OverflowError
+
     def __init__(self, *args, **kwargs):
         bytes.__init__(self)
         self.index = 0
@@ -20,11 +22,17 @@ class IBuf(bytes):
         """Have we read the whole buffer?"""
         return self.index < len(self)
 
+    def remaining(self) -> int:
+        """How many bytes are left?"""
+        return len(self) - self.index
+
     def read(self) -> int:
         """
         Read a byte from the buffer, incrementing index.
         :return: next byte in buffer
         """
+        if self.remaining() < 1:
+            raise IBuf.OverrunError("Buffer at end")
         rv = self[self.index]
         self.index += 1
         return rv
@@ -42,6 +50,8 @@ class IBuf(bytes):
         :param width: number of bytes to read
         :return: new IBuf of read bytes
         """
+        if self.remaining() < width:
+            raise IBuf.OverrunError("Buffer has {} bytes remaining, less than requested {}".format(self.remaining(), width))
         buf = [self.read() for _ in range(width)]
         return IBuf(buf)
 
@@ -51,6 +61,8 @@ class IBuf(bytes):
         :param n_bytes: number of bytes to read
         :return int: unpacked little endian integer
         """
+        if self.remaining() < n_bytes:
+            raise IBuf.OverrunError("Buffer has {} bytes remaining, less than requested {}".format(self.remaining(), n_bytes))
         i = 0
         for _ in range(n_bytes):
             n = self.read()
@@ -249,9 +261,13 @@ class MidiFile:
 
         self._format = 0
         self._ntrks = 0
+        self.__last_chunk = b''
+        self.__last_offset = 0
+        self.__track_end = False
         self._division = 0
         self.ticks_per_beat = 0
         self.bpm = 120
+        self._bpm_changes = dict()
         self._time_mode = MidiFile.TIME_TICKS
         self._current_track = 0
         self._current_channel = 0
@@ -270,7 +286,7 @@ class MidiFile:
         """
         Turn this file's raw bytes into MidiNotes and such.
         """
-        while self._bytes.has_bytes():
+        while self._bytes.remaining() >= 8:  # chunk type/size are 4 bytes each; some files have extra padding on end...??
             self._read_chunk()
         assert self._ntrks == self._current_track, "Wah %d != %d" % (self._ntrks, self._current_track)
         # sort channel msg lists by time, just in case channels were spread across tracks
@@ -292,7 +308,7 @@ class MidiFile:
                 if not msg.is_edge():
                     continue
                 if msg.what == MidiNote.NOTE_OFF and last_msg and last_msg.what == MidiNote.NOTE_ON:
-                    # todo this won't represent note fadeouts correctly I don't think. not sure what to do there unless the next thing solves it
+                    # todo this won't represent note fadeouts correctly. not sure what to do there
                     last_msg.dur = msg.t - last_msg.t
                 elif msg.what == MidiNote.NOTE_ON and last_msg and last_msg.what == MidiNote.NOTE_ON:
                     # uhh note change? velocity change? two ons in a row... ignore?
@@ -324,6 +340,9 @@ class MidiFile:
         chunk_length = self._bytes.read_int(4)
         chunk = self._bytes.read_bytes(chunk_length)
         self._process_chunk(chunk_type, chunk)
+        self.__last_chunk = chunk
+        self.__last_offset += 8 + len(chunk)
+        return chunk
 
     def _process_chunk(self, chunk_type: bytes, chunk_data: IBuf):
         if chunk_type == b'MThd':
@@ -334,7 +353,8 @@ class MidiFile:
 
         self._t = 0  # reset time for each track
         self._running_status = 0
-        while chunk_data.index < len(chunk_data):
+        self.__track_end = False
+        while chunk_data.has_bytes():
             delta_time = chunk_data.read_vlq()
             self._t += delta_time
             event_1st_byte = chunk_data.peek()
@@ -352,6 +372,7 @@ class MidiFile:
             else:
                 # MIDI event yaaaayyy
                 self._process_midi_event(delta_time, chunk_data)
+        assert self.__track_end, "Didn't see track end"
         self.duration = max(self.duration, self._t)
         self._current_track += 1
 
@@ -361,7 +382,10 @@ class MidiFile:
         self._ntrks = chunk_data.read_int(2)
         if self._format == 0:
             # single track format should only have one track
-            assert self._ntrks == 1
+            assert self._ntrks == 1, "Format 0 MIDI must have only 1 track, not %d" % self._ntrks
+        elif self._format == 2:
+            # all tracks have separate tempos o_O complciatuiated!!!! wHAwawAwaw
+            logging.warning("Format 2 midi woioioi")
         self.track_names = {n: '' for n in range(self._ntrks)}
         self._division = chunk_data.read_int(2)
 
@@ -424,17 +448,26 @@ class MidiFile:
                 self.channel_names[self._current_channel] = instr_name
                 logging.debug("Channel %d instrument name: %s", self._current_channel, instr_name)
             logging.info("Track %d instrument name: %s", (self._current_track, instr_name))
-        elif meta_type in (0x05, 0x06, 0x07):
-            # lyric, marker, cue point
+        elif meta_type <= 0x0F:
+            # text event - lyric, marker, cue point, program name, device name
             # just flavor text, don't care
-            logging.debug("Flavor text: %s", ''.join(chr(c) for c in meta_data))
+            logging.debug("Test event %d: %s", meta_type, ''.join(chr(c) for c in meta_data))
         elif meta_type == 0x20:
+            # channel prefix
             assert meta_len == 1
             self._current_channel = meta_data.read()
             logging.info("Current effective channel: %d", self._current_channel)
+        elif meta_type == 0x21:
+            # port
+            assert meta_len == 1
+            logging.debug("Midi port: %d", meta_data.read())
         elif meta_type == 0x2F:
             # end of track
             assert meta_len == 0
+            assert self.__track_end == False, "Already seen end of track"
+            self.__track_end = True
+            if chunk_data.remaining():
+                logging.error("Data still remaining (%d B) in track after seeing track end", chunk_data.remaining())
             logging.info("End of track %d", self._current_track)
         elif meta_type == 0x51:
             # tempo change
@@ -442,8 +475,8 @@ class MidiFile:
             # represented in microseconds per MIDI quarter-note
             # (aka 24ths of a microsecond per MIDI clock)
             us_per_midi_qtr_note = meta_data.read_int(3)
-            # todo this doesn't acct for mid-file tempo changes
             self.bpm = int(60 * (1e6 / us_per_midi_qtr_note))
+            self._bpm_changes[self._t] = self.bpm
             logging.info("Tempo change: %d us / qtr note = %d bpm", us_per_midi_qtr_note, self.bpm)
         elif meta_type == 0x54:
             # SMPTE offset
