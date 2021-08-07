@@ -179,13 +179,14 @@ def scale(midi: funmid.SimplyNotes, track_priority: List[int], time_slice: Tuple
             base = highest_c - 24
             logging.debug( f"Using (high C - 24) [{base}] as base instead" )
       # copy notes using adjusted base (and time slice)
-      # new_notes = [old.copy(note=max(0, old.note-base)) for old in original_notes if time_start <= old.t <= time_end]
       new_notes = []
       track_ticks = list()
       for old in sorted( original_notes, key=lambda n: n.t ):
          if old.what == funmid.MidiNote.NOTE_ON and time_start <= old.t <= time_end and old.t not in track_ticks:
             nv = max( 0, old.note - base )
             new = old.copy( note=nv )
+            assert old.t == new.t, "bad t"
+            assert old.dur == new.dur, "bad dur"
             # logging.info("Adjusting %s to new value %d -> %s", old, nv, new)
             new_notes.append( new )
             track_ticks.append( old.t )
@@ -198,8 +199,10 @@ def flatten(midi: funmid.SimplyNotes, priorities: List[int]) -> FlatNotes:
    Remove chords/collisions so only one note starts at any given time.
    """
    final = { }
-   for t, notes in midi.by_time().items():
+   for t, notes in sorted( midi.by_time().items() ):
       notes_by_prio = sorted( notes, key=lambda note: priorities.index( note.track ) )
+      # TODO tracks with chords have a possibly non-deterministic 'winning note' picked by just always taking [0] here
+      # TODO should a chord take the high note? low note? mean? is there a music theory solution??
       final[t] = notes_by_prio[0]
    return final
 
@@ -275,10 +278,14 @@ def get_vox_instrument(note: funmid.MidiNote) -> str:
       return 'n9'  # cursed downote
    elif patch == 56:  # orch hit
       return 'n12'  # orchnote
+   elif patch in (60, 61, 71):  # muted trumped, french horn, bassoon
+      return 'n14'  # morshunote
    elif patch <= 72:  # brass
       return 'n1'  # cnote
    elif patch <= 80:  # winds
       return 'n11'  # jarnote
+   elif patch in (82, 86, 91, 94):  # sawtooth, voice, polysynth, metallic
+      return 'n14'  # morshunote
    elif patch in (116, 118, 119):  # toms etc
       return 'd2'  # kick
    else:

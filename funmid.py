@@ -303,23 +303,26 @@ class MidiFile:
         flattened = []
         for c in self.channels:
             last_msg = None
+            on_notes = []
             for msg in self.channels[c]:
                 assert isinstance(msg, MidiNote)
                 if not msg.is_edge():
                     continue
-                if msg.what == MidiNote.NOTE_OFF and last_msg and last_msg.what == MidiNote.NOTE_ON:
-                    # todo this won't represent note fadeouts correctly. not sure what to do there
-                    last_msg.dur = msg.t - last_msg.t
-                elif msg.what == MidiNote.NOTE_ON and last_msg and last_msg.what == MidiNote.NOTE_ON:
-                    # uhh note change? velocity change? two ons in a row... ignore?
-                    # or is this how consecutive notes are represented? aggg ohhhh oaaagg
-                    if msg.note == last_msg.note:
-                        continue
+
+                if msg.what == MidiNote.NOTE_ON:
+                    on_notes.append(msg)
+                elif msg.what == MidiNote.NOTE_OFF:
+                    for on_note in on_notes:
+                        if on_note.patch == msg.patch and on_note.note == msg.note:
+                            # this note is now done
+                            on_note.dur = msg.t - on_note.t
+                            on_notes.remove(on_note)
+                            break
+
                 flattened.append(msg)
-                last_msg = msg
-            # make sure the last note in the channel has duration too
-            if last_msg and last_msg.dur == 0:
-                last_msg.dur = self.duration - last_msg.t
+
+            assert len(on_notes) == 0, "ended with some notes that never turned off...? %s" % on_notes
+
         return list(sorted(flattened, key=lambda n: n.t))
 
     def to_simplynotes(self) -> SimplyNotes:
