@@ -182,7 +182,8 @@ def scale(midi: funmid.SimplyNotes, track_priority: List[int], time_slice: Tuple
       new_notes = []
       track_ticks = list()
       for old in sorted( original_notes, key=lambda n: n.t ):
-         if old.what == funmid.MidiNote.NOTE_ON and time_start <= old.t <= time_end and old.t not in track_ticks:
+         ENABLE_CHORDS = True
+         if old.what == funmid.MidiNote.NOTE_ON and time_start <= old.t <= time_end and (ENABLE_CHORDS or old.t not in track_ticks):
             nv = max( 0, old.note - base )
             new = old.copy( note=nv )
             assert old.t == new.t, "bad t"
@@ -194,6 +195,47 @@ def scale(midi: funmid.SimplyNotes, track_priority: List[int], time_slice: Tuple
    return midi.copy( notes=final )
 
 
+def get_chord_root(notes: List[funmid.MidiNote]) -> funmid.MidiNote:
+   """
+   Given a chord, try to identify the root note. This is music theory and I'm scared.
+   """
+   notes_by_pitch = list(sorted(notes, key=lambda n: n.note))
+   # first guess: lowest note
+   retval = notes_by_pitch[0]
+   if len(notes) < 3:
+      # just use this guess
+      logging.debug("Dichord? Just using lowest note of %s" % notes_by_pitch)
+      return retval
+
+   # otherwise, try and figure out if we've got some funny inversion happening
+
+   # each pitch value is 1 semitone
+   # ACCORDING TO THIS GRAPH OF COMMON CHORDS ON WIKIPEDIA: https://en.wikipedia.org/wiki/Chord_(music)#Examples
+   # third should be 3 (minor) or 4 (major) semitones away
+   # fifth should be 6 (diminished), 8 (augmented), or 7 (everything else) semitones away
+   # there can also be a sixth at 9 semitones, or a seventh at 10 (min) or 11 (maj)
+   # note, this doesn't account for sus chords and stuff. this world is so corrupt
+   left_to_guess = notes_by_pitch[:]
+   while left_to_guess:
+      root = left_to_guess[0]
+      remainder = notes_by_pitch[:]
+      remainder.remove(root)
+      shifted_root = root.copy(note=root.note-12)
+      third = remainder[0]
+      fifth = remainder[1]
+      for guess in (root, shifted_root):
+         if 3 <=abs(third.note - guess.note) <= 4:
+            # third appears ok
+            if 6 <= abs(fifth.note - guess.note) <= 8:
+               # fifth appears ok too
+               logging.debug(f"Think we found a chord with root {root}: {guess}, {third}, {fifth}")
+               return root
+
+      left_to_guess.remove(root)
+   logging.info("Didn't see a chord in %s", ', '.join(str(n) for n in notes_by_pitch))
+   return retval
+
+
 def flatten(midi: funmid.SimplyNotes, priorities: List[int]) -> FlatNotes:
    """
    Remove chords/collisions so only one note starts at any given time.
@@ -201,9 +243,21 @@ def flatten(midi: funmid.SimplyNotes, priorities: List[int]) -> FlatNotes:
    final = { }
    for t, notes in sorted( midi.by_time().items() ):
       notes_by_prio = sorted( notes, key=lambda note: priorities.index( note.track ) )
-      # TODO tracks with chords have a possibly non-deterministic 'winning note' picked by just always taking [0] here
-      # TODO should a chord take the high note? low note? mean? is there a music theory solution??
-      final[t] = notes_by_prio[0]
+      # if more than one "winner", we have a little extra decision making to do...
+
+      winning_track = notes_by_prio[0].track
+      winning_notes = [note for note in notes_by_prio if note.track == winning_track]
+      if len(winning_notes) == 1:
+         # just one note is being played now, hooray
+         final[t] = winning_notes[0]
+      elif funmid.is_percussion(winning_notes):
+         # multiple percussion hits are happening - sort by approx. impact to rhythm
+         # general order of notes in midi spec is kick, snare, hi hat, cymbal, other
+         # -- seems good enough to me! lowest 'note' wins.
+         final[t] = sorted(winning_notes, key=lambda note: note.note)[0]
+      else:
+         # we have a chord!! uh oh!!
+         final[t] = get_chord_root(winning_notes)
    return final
 
 

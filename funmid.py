@@ -302,7 +302,6 @@ class MidiFile:
         """
         flattened = []
         for c in self.channels:
-            last_msg = None
             on_notes = []
             for msg in self.channels[c]:
                 assert isinstance(msg, MidiNote)
@@ -321,7 +320,10 @@ class MidiFile:
 
                 flattened.append(msg)
 
-            assert len(on_notes) == 0, "ended with some notes that never turned off...? %s" % on_notes
+            if len(on_notes) != 0:
+                logging.warning("ended with some notes that never turned off...? %s", on_notes)
+                for note in on_notes:
+                    note.dur = self.duration - note.t
 
         return list(sorted(flattened, key=lambda n: n.t))
 
@@ -450,7 +452,7 @@ class MidiFile:
             if not self.channel_names.get(self._current_channel):
                 self.channel_names[self._current_channel] = instr_name
                 logging.debug("Channel %d instrument name: %s", self._current_channel, instr_name)
-            logging.info("Track %d instrument name: %s", (self._current_track, instr_name))
+            logging.info("Track %d instrument name: %s", self._current_track, instr_name)
         elif meta_type <= 0x0F:
             # text event - lyric, marker, cue point, program name, device name
             # just flavor text, don't care
