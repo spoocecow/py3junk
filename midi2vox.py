@@ -495,7 +495,7 @@ def get_vox_drums(note: int) -> str:
       return 'smw_yossy<.4'
    else:
       # probably not important........
-      print( "No note for percussion: %d" % note )
+      print( "No note for percussion: %d (%s)" % (note, funmid.midi_percussion_to_str(note) ) )
       return ''
 
 
@@ -553,7 +553,7 @@ def build_voxstr(notes: funmid.Notes, bpm: int, note_len: int) -> str:
    return s
 
 
-def main(filename=r"ta-poochie.mid"):
+def main(filename=r"ta-poochie.mid", gofast=True):
    logging.basicConfig( level=logging.INFO )
    midifile = funmid.MidiFile( filename )
    midi = midifile.to_simplynotes()
@@ -562,9 +562,14 @@ def main(filename=r"ta-poochie.mid"):
    print( filename )
    print( '=' * 40 )
    friendly_print( midi )
-   trax = prompt_for_tracks( midi )
-   time_slice = prompt_for_time_slice( midi, trax )
-   tick_quantize = prompt_for_resolution( scale( midi, trax, time_slice ), trax )
+   if gofast:
+      trax = sorted( midi.track_names.keys() )
+      time_slice = (0, 2**31)
+      tick_quantize = midi.ticks_per_beat / 4
+   else:
+      trax = prompt_for_tracks( midi )
+      time_slice = prompt_for_time_slice( midi, trax )
+      tick_quantize = prompt_for_resolution( scale( midi, trax, time_slice ), trax )
 
    # do some sanity checkin'
    min_note_length = int( 4 * (midi.ticks_per_beat / tick_quantize) )
