@@ -204,7 +204,7 @@ def get_chord_root(notes: List[funmid.MidiNote]) -> funmid.MidiNote:
    retval = notes_by_pitch[0]
    if len(notes) < 3:
       # just use this guess
-      logging.debug("Dichord? Just using lowest note of %s" % notes_by_pitch)
+      logging.debug("Dichord? idk music theory babey im Just useing lowest note of %s" % notes_by_pitch)
       return retval
 
    # otherwise, try and figure out if we've got some funny inversion happening
@@ -232,7 +232,7 @@ def get_chord_root(notes: List[funmid.MidiNote]) -> funmid.MidiNote:
                return root
 
       left_to_guess.remove(root)
-   logging.info("Didn't see a chord in %s", ', '.join(str(n) for n in notes_by_pitch))
+   logging.debug("Didn't see a chord in %s", ', '.join(str(n) for n in notes_by_pitch))
    return retval
 
 
@@ -276,13 +276,17 @@ def quantize_to_beat(notes: FlatNotes, quantize_to: int) -> FlatNotes:
       # cull notes that the timeline has already passed by
       for next_time in sorted( p2 ):
          n = pool[next_time]
-         if next_time + n.dur < t:
+         if n.dur > 0 and next_time + n.dur <= t:  # equal case is for notes that end at exactly t
             pool.pop( next_time )
+         elif next_time > t:
+            # can stop culling, we're looking at the future now
+            break
       # candidate note is next remaining
       next_time = sorted( pool )[0]
       next_note = pool[next_time]
 
       # if the current time is within the candidate note's start/end time, play it
+      # TODO this might be overly permissive, maybe check for within 1 beat of note's start or smth
       if next_time <= t < next_time + next_note.dur:
          final[t] = next_note
          # TODO could figure out durations better here - this cuts off notes early
@@ -310,45 +314,57 @@ def get_vox_instrument(note: funmid.MidiNote) -> str:
    if note.is_drums():
       return '<drums>'  # will convert later, this is just for `*` detection
    patch = note.patch + 1
-   if patch <= 16:  # pianos n such
+   if patch in (13, 14, 116): # marimba, xylophone, woodblock
+      return 'd5'  # hazymazewood
+   elif patch <= 16:  # pianos n such
       return 'n5'  # yossynote
    elif patch <= 24:  # organs
       return 'n2'  # catnote
-   elif patch <= 29:  # acoustic guitar
+   elif patch <= 27:  # acoustic guitar
       return 'n8'  # dantnote
+   elif patch == 30:  # overdriven guitar
+      return 'hl_hev>.25'  # medium fuzz
+   elif patch == 31:  # distortion guitar
+      return 'hl_hev>.5'  # LOUD fuzz
    elif patch <= 32:  # electric guitar
       return 'n4'  # dootnote
    elif patch <= 40:  # bass
       return 'n10'  # slapnote
-   elif patch in (46, 59):  # pizzicato, tuba
-      return 'n7'  # bupnote
+   elif patch == 46:  # pizzicato
+      return 'n17'  # pizzicatonote. wow!
    elif patch <= 47:  # string
       return 'n13'  # shynote
    elif patch == 48:  # timpani
       return 'd2'  # kick
    elif patch <= 52:  # strings
       return 'n2'  # catnote
-   elif patch <= 55:  # choir
-      return 'n9'  # cursed downote
+   elif patch <= 55 or patch in (92, 102, 103):  # choir, goblins, echoes
+      return 'n16'  # cursed hauntnote
    elif patch == 56:  # orch hit
       return 'n12'  # orchnote
-   elif patch in (60, 61, 71):  # muted trumped, french horn, bassoon
+   elif patch == 59:  # tuba
+      return 'n7'  # bupnote
+   elif patch in (57, 60):  # trumpet, muted trumpet
+      return 'n18'  # zunnote
+   elif patch in (60, 61, 71):  # french horn, bassoon
       return 'n14'  # morshunote
    elif patch <= 72:  # brass
       return 'n1'  # cnote
+   elif patch in (77, 80):  # blown bottle, ocarina
+      return 'n15'  # hazymazenote
    elif patch <= 80:  # winds
       return 'n11'  # jarnote
    elif patch in (82, 86, 91, 94):  # sawtooth, voice, polysynth, metallic
       return 'n14'  # morshunote
-   elif patch in (116, 118, 119):  # toms etc
+   elif patch in (118, 119):  # toms etc
       return 'd2'  # kick
    else:
       # idk there are 11 kk notes just use those
       return 'kk%d' % (1 + int( (patch - 80) / (48 / 11) ))
 
 
-def get_vox_pitch(note: int, vox_instr: str = 'n1') -> str:
-   """Convert a note (length ignored) to a vox string"""
+def get_vox_pitch(note: int) -> str:
+   """Convert a note (length ignored) to a vox string suffix"""
 
    scales = [
       '-10', '-9', '-9', '-8', '-7', '-7', '-6', '-5', '-4', '-3', '-2', '-', '',
@@ -361,45 +377,60 @@ def get_vox_pitch(note: int, vox_instr: str = 'n1') -> str:
    else:
       scale_s = scales[note]
 
-   return vox_instr + scale_s
+   return scale_s
 
 
 def get_vox_drums(note: int) -> str:
    """Convert a percussion note to a vox string"""
+   if note in (87, 86):  # open/mute surdo
+      return 'd4'
    if note == 79:  # low cuica
       return 'n3'
    elif note == 78:  # high cuica
       return 'n3+6'
-   if note in (82, 81, 70, 69, 54, 51, 46):  # triangle, maracas, cabasa, tambourine, ride, hi hat
+   elif note in (82, 81, 70, 69, 54, 51, 46):  # triangle, maracas, cabasa, tambourine, ride, hi hat
       return "'s"
    elif note in (80, 59, 44, 42):  # mute triangle, ride, hi hats
       return "kk14"
+   elif note in (62, 63):  # mute/open hi congas
+      return 'd4+4'
+   elif note == 64:  # lo conga
+      return 'd4'
+   elif note == 60:  # hi bongo
+      return 'd6+4'
+   elif note == 61:  # lo bongo
+      return 'd6'
    elif note in (57, 49):  # crash cymbals
       return 'kk14-10'
    elif note in (50, 48, 47, 45, 43, 41):  # toms
       return 'd2+%d' % (5 + (note - 40) / 2)
    elif note in (40, 38):  # snares
       return 'd1'
-   elif note in (39, 30, 29):  # clap/scratch
+   elif note == 39:  # clap/scratch
       return 'd3'
    elif note == 37:  # side stick
       return 'kk12'
    elif note in (36, 35):  # bass drum
       return 'd2'
+   elif note == 30:  # scratch pull
+      return 'smw_yossy>.5'
+   elif note == 29:  # scratch push
+      return 'smw_yossy<.4'
    else:
-      # probably not important
+      # probably not important........
       print( "No note for percussion: %d" % note )
       return ''
 
 
 def note_to_vox(note: funmid.MidiNote, instrument_hint: str = '') -> str:
+   """Convert a note to a full vox string token (instrument[+pitch])"""
    if note.is_drums():
       return get_vox_drums( note.note )
    else:
       instrument = get_vox_instrument(note)
       if instrument_hint:
          instrument = instrument_hint
-      return get_vox_pitch( note.note, instrument )
+      return instrument + get_vox_pitch( note.note )
 
 
 def build_voxstr(notes: FlatNotes, bpm: int, note_len: int) -> str:
