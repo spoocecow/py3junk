@@ -317,6 +317,15 @@ def quantize_to_beat(notes: FlatNotes, quantize_to: int) -> funmid.Notes:
          # nothing playing
          next_note = funmid.MidiNote()  # empty/rest
 
+      if not g_ChangeLengths:
+         # just in case this fires too often or something
+         # TBD maybe only change lengths for priority #1 track?
+         final.append(next_note)
+         pool.pop(next_note.t)
+         last_note = next_note
+         t += quantize_to
+         continue
+
       # is a note still playing from last tick?
       if next_note is last_note:
          # increment how long this note has been playing for
@@ -505,7 +514,7 @@ def build_voxstr(notes: funmid.Notes, bpm: int, note_len: int) -> str:
    s = f'^song ^bpm={bpm}'
    lastnote = None
    cur_len = note_len
-   last_len = note_len
+   last_len = 0
    for note in notes:
       if note.what == LengthChange.INC:
          cur_len //= 2
