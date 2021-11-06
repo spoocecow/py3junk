@@ -391,6 +391,8 @@ def get_vox_instrument(note: funmid.MidiNote) -> str:
    if note.is_drums():
       return '<drums>'  # will convert later, this is just for `*` detection
    patch = note.patch + 1
+   if patch in (12, 15):  # vibraphone, tubular bells
+      return 'bonkwarn'  # coconut bonk
    if patch in (13, 14, 116): # marimba, xylophone, woodblock
       return 'd5'  # hazymazewood
    elif patch <= 16:  # pianos n such
@@ -415,7 +417,7 @@ def get_vox_instrument(note: funmid.MidiNote) -> str:
       return 'd2'  # kick
    elif patch <= 52:  # strings
       return 'n2'  # catnote
-   elif patch <= 55 or patch in (92, 102, 103):  # choir, goblins, echoes
+   elif patch <= 55 or patch in (102, 103):  # choir, goblins, echoes
       return 'n16'  # cursed hauntnote
    elif patch == 56:  # orch hit
       return 'n12'  # orchnote
@@ -433,6 +435,8 @@ def get_vox_instrument(note: funmid.MidiNote) -> str:
       return 'n11'  # jarnote
    elif patch in (82, 86, 91, 94):  # sawtooth, voice, polysynth, metallic
       return 'n14'  # morshunote
+   elif patch in (92, 101):  # choir pad, brightness
+      return 'newwarn'  # nsmb ba!
    elif patch in (118, 119):  # toms etc
       return 'd2'  # kick
    else:
@@ -499,6 +503,10 @@ def get_vox_drums(note: int) -> str:
       return 'kk12'
    elif note in (36, 35):  # bass drum
       return 'd2'
+   elif note == 34:  # metronome bell
+      return 'hl_crowbar'
+   elif note == 33:  # metronome tick
+      return 'gmod_ragdoll'  # lol
    elif note == 31:  # sticks
       return 'kk13'
    elif note == 30:  # scratch pull
@@ -565,7 +573,7 @@ def build_voxstr(notes: funmid.Notes, bpm: int, note_len: int) -> str:
    return s
 
 
-def main(filename=r"ta-poochie.mid", gofast=True):
+def main(filename=r"ta-poochie.mid", gofast=False):
    logging.basicConfig( level=logging.INFO )
    midifile = funmid.MidiFile( filename )
    midi = midifile.to_simplynotes()
@@ -606,6 +614,6 @@ if __name__ == "__main__":
       _fn = sys.argv[1]
    else:
       _fn = input( "filename pls" ).strip( '"' )
-   _wee = main( _fn )
+   _wee = main( _fn, gofast=False )
    with open( r"C:\tmp\vox.txt", "w" ) as _f:
       _f.write( _wee + '\n' )
