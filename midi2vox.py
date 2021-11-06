@@ -461,10 +461,20 @@ def get_vox_drums(note: int) -> str:
    """Convert a percussion note to a vox string"""
    if note in (87, 86):  # open/mute surdo
       return 'd4'
+   elif note == 85:  # castanets
+      return 'kk12'
+   elif note == 83:  # jingle bells
+      return 'shinewarn'  # lol
    if note == 79:  # low cuica
       return 'n3'
    elif note == 78:  # high cuica
       return 'n3+6'
+   elif note == 77:  # low wood block
+      return 'd6-4'
+   elif note == 76:  # high wood block
+      return 'dd-2'
+   elif note == 75:  # claves
+      return 'd5'
    elif note in (82, 81, 70, 69, 54, 51, 46):  # triangle, maracas, cabasa, tambourine, ride, hi hat
       return "'s"
    elif note in (80, 59, 44, 42):  # mute triangle, ride, hi hats
@@ -489,6 +499,8 @@ def get_vox_drums(note: int) -> str:
       return 'kk12'
    elif note in (36, 35):  # bass drum
       return 'd2'
+   elif note == 31:  # sticks
+      return 'kk13'
    elif note == 30:  # scratch pull
       return 'smw_yossy>.5'
    elif note == 29:  # scratch push

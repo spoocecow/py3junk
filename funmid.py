@@ -722,7 +722,18 @@ def midi_instrument_to_str(patch: int) -> str:
 
 def midi_percussion_to_str(note: int) -> str:
     # from http://www.music.mcgill.ca/~ich/classes/mumt306/StandardMIDIfileformat.html
+    # with some hints from other places
     return {
+        # nonstandard
+        27: "High Q",
+        28: "Slap",
+        29: "Scratch Push",
+        30: "Scratch Pull",
+        31: "Sticks",
+        32: "Square Click",
+        33: "Metronome Click",
+        34: "Metronome Bell",
+        # standard
         35: "Acoustic Bass Drum",
         36: "Bass Drum 1",
         37: "Side Stick",
@@ -770,6 +781,13 @@ def midi_percussion_to_str(note: int) -> str:
         79: "Open Cuica",
         80: "Mute Triangle",
         81: "Open Triangle",
+        # nonstandard
+        82: "Shaker",
+        83: "Jingle Bell",
+        84: "Bell Tree",
+        85: "Castanets",
+        86: "Mute Surdo",
+        87: "Open Surdo",
     }.get(note, "?? %d ??" % note)
 
 
