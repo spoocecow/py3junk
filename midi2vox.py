@@ -15,7 +15,9 @@ import funmid
 FlatNotes = Dict[int, funmid.MidiNote]
 
 MAX_VOXSTR_LEN = 500
-MAX_NOTES = MAX_VOXSTR_LEN + 100
+MAX_NOTES = MAX_VOXSTR_LEN * 2
+
+g_ChangeLengths = True
 
 
 def get_instrument_counts(notes: funmid.Notes) -> Dict[str, int]:
@@ -261,12 +263,26 @@ def flatten(midi: funmid.SimplyNotes, priorities: List[int]) -> FlatNotes:
    return final
 
 
-def quantize_to_beat(notes: FlatNotes, quantize_to: int) -> FlatNotes:
+class LengthChange(funmid.MidiNote):
+
+   INC = 111
+   DEC = 222
+
+   def __init__(self, what=INC):
+      funmid.MidiNote.__init__(self)
+      self.what = what
+
+   def __repr__(self):
+      return '<N len ' + ('INC' if self.what == LengthChange.INC else 'DEC') + '>'
+
+def quantize_to_beat(notes: FlatNotes, quantize_to: int) -> funmid.Notes:
    """
    Remove notes that don't fit into the given beat (or insert rests if nothing playing on beat).
    """
    t = 0
-   final = { }
+   final = []
+   last_note = funmid.MidiNote()
+   len_change_stack = 1
    pool = notes.copy()
    # scroll through timeline and lay down notes on the beat
    while t < max( pool.keys() ):
@@ -281,25 +297,77 @@ def quantize_to_beat(notes: FlatNotes, quantize_to: int) -> FlatNotes:
          elif next_time > t:
             # can stop culling, we're looking at the future now
             break
-      # candidate note is next remaining
-      next_time = sorted( pool )[0]
+
+      # get candidate for next note
+      next_time = sorted(pool)[0]
+      for candidate_t in sorted(pool):
+         # get the note that starts closest to this time (without going over)
+         if candidate_t > t:
+            break
+         elif (t - candidate_t) < (t - next_time):
+            next_time = candidate_t
+
       next_note = pool[next_time]
 
       # if the current time is within the candidate note's start/end time, play it
-      # TODO this might be overly permissive, maybe check for within 1 beat of note's start or smth
       if next_time <= t < next_time + next_note.dur:
-         final[t] = next_note
-         # TODO could figure out durations better here - this cuts off notes early
-         # TODO would need to work out good way to insert note len changes
-         # for now, remove this note from future consideration
-         pool.pop( next_time )
+         # we have a note playing :)
+         pass
       else:
-         final[t] = funmid.MidiNote()  # empty/rest
+         # nothing playing
+         next_note = funmid.MidiNote()  # empty/rest
+
+      # is a note still playing from last tick?
+      if next_note is last_note:
+         # increment how long this note has been playing for
+         len_change_stack += 1
+         pass
+      else:
+         if len_change_stack > 1:
+            # new note after a long note
+            # insert the length changes before last note, append length decs after last note
+            idx = final.index(last_note)
+            stack = len_change_stack
+            while stack > 1:
+               final.insert( idx, LengthChange(LengthChange.INC) )
+               stack /= 2
+            idx = final.index(last_note)
+            stack = len_change_stack
+            while stack > 1:
+               final.insert( idx+1, LengthChange(LengthChange.DEC) )
+               stack /= 2
+            if stack != 1:
+               # there was an extra beat (e.g. dotted note) that didn't quite fit
+               final.append( funmid.MidiNote() )
+            len_change_stack = 1
+         else:
+            # new note after a regular note/rest
+            pass
+
+         final.append(next_note)
+         # can stop considering last note in pool
+         if last_note in final and last_note.t in pool:
+            pool.pop(last_note.t)
+
+      last_note = next_note
       t += quantize_to
+
+   # did we end on a long note that we never got to finish?
+   if len_change_stack > 1:
+      idx = final.index(last_note)
+      stack = len_change_stack
+      while stack > 1:
+         final.insert( idx, LengthChange(LengthChange.INC) )
+         stack /= 2
+      idx = final.index(last_note)
+      stack = len_change_stack
+      while stack > 1:
+         final.insert( idx+1, LengthChange(LengthChange.DEC) )
+         stack /= 2
    return final
 
 
-def crunch(midi: funmid.SimplyNotes, track_priority: List[int], tick_quantize: int, time_slice: Tuple[int, int]) -> FlatNotes:
+def crunch(midi: funmid.SimplyNotes, track_priority: List[int], tick_quantize: int, time_slice: Tuple[int, int]) -> funmid.Notes:
    """
    Smush all desired tracks together into a single flat list.
    """
@@ -433,11 +501,23 @@ def note_to_vox(note: funmid.MidiNote, instrument_hint: str = '') -> str:
       return instrument + get_vox_pitch( note.note )
 
 
-def build_voxstr(notes: FlatNotes, bpm: int, note_len: int) -> str:
-   s = f'^song ^bpm={bpm} ^l={note_len}'
+def build_voxstr(notes: funmid.Notes, bpm: int, note_len: int) -> str:
+   s = f'^song ^bpm={bpm}'
    lastnote = None
-   for t in sorted( notes.keys() ):
-      note = notes[t]
+   cur_len = note_len
+   last_len = note_len
+   for note in notes:
+      if note.what == LengthChange.INC:
+         cur_len //= 2
+         continue
+      elif note.what == LengthChange.DEC:
+         cur_len *= 2
+         continue
+
+      if cur_len != last_len:
+         s += f' ^l={cur_len}'
+         last_len = cur_len
+
       if note.is_rest():
          if lastnote:
             if s[-1] not in ' .':
