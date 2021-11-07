@@ -20,6 +20,34 @@ MAX_NOTES = MAX_VOXSTR_LEN * 2
 g_ChangeLengths = True
 
 
+class LengthChange(funmid.MidiNote):
+
+   INC = 111
+   DEC = 222
+
+   def __init__(self, t, what=INC):
+      funmid.MidiNote.__init__(self)
+      self.t = t
+      self.what = what
+
+   def __repr__(self):
+      return '<N len ' + ('INC' if self.what == LengthChange.INC else 'DEC') + '>'
+
+
+class BPMChange(funmid.MidiNote):
+
+   BPM_CHANGE = 333
+
+   def __init__(self, t, new_bpm):
+      funmid.MidiNote.__init__(self)
+      self.what = BPMChange.BPM_CHANGE
+      self.t = t
+      self.note = new_bpm
+
+   def __repr__(self):
+      return '<N bpm:=%d>' % self.note
+
+
 def get_instrument_counts(notes: funmid.Notes) -> Dict[str, int]:
    """
    Get counts of instruments used in the list of notes
@@ -263,18 +291,6 @@ def flatten(midi: funmid.SimplyNotes, priorities: List[int]) -> FlatNotes:
    return final
 
 
-class LengthChange(funmid.MidiNote):
-
-   INC = 111
-   DEC = 222
-
-   def __init__(self, what=INC):
-      funmid.MidiNote.__init__(self)
-      self.what = what
-
-   def __repr__(self):
-      return '<N len ' + ('INC' if self.what == LengthChange.INC else 'DEC') + '>'
-
 def quantize_to_beat(notes: FlatNotes, quantize_to: int) -> funmid.Notes:
    """
    Remove notes that don't fit into the given beat (or insert rests if nothing playing on beat).
@@ -316,6 +332,7 @@ def quantize_to_beat(notes: FlatNotes, quantize_to: int) -> funmid.Notes:
       else:
          # nothing playing
          next_note = funmid.MidiNote()  # empty/rest
+         next_note.t = t
 
       if not g_ChangeLengths:
          # just in case this fires too often or something
@@ -338,16 +355,18 @@ def quantize_to_beat(notes: FlatNotes, quantize_to: int) -> funmid.Notes:
             idx = final.index(last_note)
             stack = len_change_stack
             while stack > 1:
-               final.insert( idx, LengthChange(LengthChange.INC) )
+               final.insert( idx, LengthChange(t, LengthChange.INC) )
                stack /= 2
             idx = final.index(last_note)
             stack = len_change_stack
             while stack > 1:
-               final.insert( idx+1, LengthChange(LengthChange.DEC) )
+               final.insert( idx+1, LengthChange(t, LengthChange.DEC) )
                stack /= 2
             if stack != 1:
                # there was an extra beat (e.g. dotted note) that didn't quite fit
-               final.append( funmid.MidiNote() )
+               extra = funmid.MidiNote()
+               extra.t = t
+               final.append( extra )
             len_change_stack = 1
          else:
             # new note after a regular note/rest
@@ -383,6 +402,18 @@ def crunch(midi: funmid.SimplyNotes, track_priority: List[int], tick_quantize: i
    scale_corrected_notes = scale( midi, track_priority, time_slice )
    flat_notes = flatten( scale_corrected_notes, track_priority )
    quant = quantize_to_beat( flat_notes, tick_quantize )
+
+   # mix in bpm changes
+   last_t = -1
+   for t, bpm_change in midi.bpm_info.items():
+      # look through quant for where to insert bpm change
+      for note in quant[:]:
+         nt = note.t
+         if last_t <= t <= nt:
+            idx = quant.index(note)
+            quant.insert(idx, BPMChange(t, bpm_change))
+            break
+         last_t = nt
    return quant
 
 
@@ -538,9 +569,10 @@ def note_to_vox(note: funmid.MidiNote, instrument_hint: str = '') -> str:
       return instrument + get_vox_pitch( note.note )
 
 
-def build_voxstr(notes: funmid.Notes, bpm: int, note_len: int) -> str:
-   s = f'^song ^bpm={bpm}'
+def build_voxstr(notes: funmid.Notes, note_len: int) -> str:
+   s = '^s'
    lastnote = None
+   cur_bpm = 0
    cur_len = note_len
    last_len = 0
    for note in notes:
@@ -549,6 +581,11 @@ def build_voxstr(notes: funmid.Notes, bpm: int, note_len: int) -> str:
          continue
       elif note.what == LengthChange.DEC:
          cur_len *= 2
+         continue
+      elif note.what == BPMChange.BPM_CHANGE:
+         if note.note != cur_bpm:
+            cur_bpm = note.note
+            s += f' ^bpm={cur_bpm}'
          continue
 
       if cur_len != last_len:
@@ -601,18 +638,27 @@ def main(filename=r"ta-poochie.mid", gofast=False):
 
    # do some sanity checkin'
    min_note_length = int( 4 * (midi.ticks_per_beat / tick_quantize) )
+   default_bpm = midi.bpm
    if min_note_length > 32:
-      midi.bpm = int( midi.bpm * (min_note_length / 32) )
+      default_bpm = int( midi.bpm * (min_note_length / 32) )
       min_note_length = 32
       print( "Notes are too short, increasing bpm to {bpm}".format( bpm=midi.bpm ) )
-   if midi.bpm > 480:
+   if default_bpm > 480:
       tick_quantize = int( tick_quantize * (midi.bpm / 480) )
-      midi.bpm = 480
+      default_bpm = 480
       print( "BPM too high, increasing tick quantization to {q}".format( q=tick_quantize ) )
 
    # Param processing done, time to build voxstr
    final_notes = crunch( midi, trax, tick_quantize, time_slice )
-   voxstr = build_voxstr( final_notes, int( midi.bpm ), min_note_length )
+   bpm_info = [BPMChange(t, bpm) for (t, bpm) in midifile.get_bpms().items()]
+   if not bpm_info:
+      bpm_info = [BPMChange(0, default_bpm)]
+   # todo this is fragile (every note needs a valid t, this throws away ordering done by crunch)
+   # maybe do bpm in crunch/quant instead of here?
+   # noinspection PyTypeChecker
+   #final_seq = [bpm_info[0]] + sorted(final_notes + bpm_info[1:], key=lambda n: n.t)
+   final_seq = [bpm_info[0]] + final_notes
+   voxstr = build_voxstr( final_seq, min_note_length )
 
    return voxstr
 

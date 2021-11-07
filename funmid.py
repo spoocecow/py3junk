@@ -164,11 +164,11 @@ class SimplyNotes:
     Quick container to be fed into other stuff.
     """
 
-    def __init__(self, notes: Notes, track_names: TrackNames, channel_names: TrackNames, bpm: int = 120, ticks_per_beat: int = 120):
+    def __init__(self, notes: Notes, track_names: TrackNames, channel_names: TrackNames, bpm: Dict[int, int], ticks_per_beat: int = 120):
         self.notes = notes
         self.track_names = track_names
         self.channel_names = channel_names
-        self.bpm = bpm
+        self.bpm_info = bpm
         self.ticks_per_beat = ticks_per_beat
 
         self.__by_track = {}
@@ -176,6 +176,10 @@ class SimplyNotes:
         self.__by_time = {}
 
         self.__cleanup()
+
+    @property
+    def bpm(self):
+        return sorted(self.bpm_info)[0]
 
     def __cleanup(self):
         # clean up track names for presentation later
@@ -336,9 +340,12 @@ class MidiFile:
             notes=self.get_notes(),
             track_names=self.track_names.copy(),
             channel_names=self.channel_names.copy(),
-            bpm=self.bpm,
+            bpm=self._bpm_changes,
             ticks_per_beat=self.ticks_per_beat
         )
+
+    def get_bpms(self):
+        return self._bpm_changes
 
     def _read_chunk(self):
         chunk_type = self._bytes.read_bytes(4)
