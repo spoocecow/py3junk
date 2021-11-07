@@ -460,7 +460,7 @@ def get_vox_instrument(note: funmid.MidiNote) -> str:
       return 'n14'  # morshunote
    elif patch <= 72:  # brass
       return 'n1'  # cnote
-   elif patch in (77, 80):  # blown bottle, ocarina
+   elif patch in (77, 80, 99):  # blown bottle, ocarina, crystal
       return 'n15'  # hazymazenote
    elif patch <= 80:  # winds
       return 'n11'  # jarnote
@@ -577,7 +577,7 @@ def build_voxstr(notes: funmid.Notes, note_len: int) -> str:
    last_len = 0
    for note in notes:
       if note.what == LengthChange.INC:
-         cur_len //= 2
+         cur_len /= 2
          continue
       elif note.what == LengthChange.DEC:
          cur_len *= 2
@@ -589,7 +589,10 @@ def build_voxstr(notes: funmid.Notes, note_len: int) -> str:
          continue
 
       if cur_len != last_len:
-         s += f' ^l={cur_len}'
+         if cur_len < 1:
+            s += ' ^l=1 . (oops)'  # TODO
+         else:
+            s += f' ^l=%d' % cur_len
          last_len = cur_len
 
       if note.is_rest():

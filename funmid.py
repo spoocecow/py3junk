@@ -239,7 +239,7 @@ class SimplyNotes:
         :param kwargs: fields/values to override on the new collection
         :return: new collection
         """
-        other = SimplyNotes(self.notes.copy(), self.track_names, self.channel_names, self.bpm, self.ticks_per_beat)
+        other = SimplyNotes(self.notes.copy(), self.track_names, self.channel_names, self.bpm_info, self.ticks_per_beat)
         for field, value in kwargs.items():
             setattr(other, field, value)
         other.__cleanup()
@@ -340,12 +340,15 @@ class MidiFile:
             notes=self.get_notes(),
             track_names=self.track_names.copy(),
             channel_names=self.channel_names.copy(),
-            bpm=self._bpm_changes,
+            bpm=self.get_bpms(),
             ticks_per_beat=self.ticks_per_beat
         )
 
     def get_bpms(self):
-        return self._bpm_changes
+        if self._bpm_changes:
+            return self._bpm_changes
+        else:
+            return {0: self.bpm}
 
     def _read_chunk(self):
         chunk_type = self._bytes.read_bytes(4)
