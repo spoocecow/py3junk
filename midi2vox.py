@@ -433,6 +433,8 @@ def get_vox_instrument(note: funmid.MidiNote) -> str:
       return 'n15'  # hazymazenote
    elif patch <= 80:  # winds
       return 'n11'  # jarnote
+   elif patch == 81:  # lead 1 square
+      return 'n9' # downote
    elif patch in (82, 86, 91, 94):  # sawtooth, voice, polysynth, metallic
       return 'n14'  # morshunote
    elif patch in (92, 101):  # choir pad, brightness
@@ -483,16 +485,22 @@ def get_vox_drums(note: int) -> str:
       return "'s"
    elif note in (80, 59, 44, 42):  # mute triangle, ride, hi hats
       return "kk14"
-   elif note in (62, 63):  # mute/open hi congas
-      return 'd4+4'
+   elif note == 68:  # low agogo
+      return 'gmod_metal-2'
+   elif note == 67:  # high agogo
+      return 'gmod_metal+2'
    elif note == 64:  # lo conga
       return 'd4'
+   elif note in (62, 63):  # mute/open hi congas
+      return 'd4+4'
    elif note == 60:  # hi bongo
       return 'd6+4'
    elif note == 61:  # lo bongo
       return 'd6'
    elif note in (57, 49):  # crash cymbals
       return 'kk14-10'
+   elif note == 56:  # cowbell
+      return 'bonkwarn+8'
    elif note in (50, 48, 47, 45, 43, 41):  # toms
       return 'd2+%d' % (5 + (note - 40) / 2)
    elif note in (40, 38):  # snares
@@ -516,7 +524,7 @@ def get_vox_drums(note: int) -> str:
    else:
       # probably not important........
       print( "No note for percussion: %d (%s)" % (note, funmid.midi_percussion_to_str(note) ) )
-      return ''
+      return '.'
 
 
 def note_to_vox(note: funmid.MidiNote, instrument_hint: str = '') -> str:
