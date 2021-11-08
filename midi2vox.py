@@ -167,7 +167,7 @@ def prompt_for_time_slice(midi: funmid.SimplyNotes, selected_tracks: List[int]) 
    min_final = min_t
    max_final = max_t
    if 'y' in input( "Input desired time slices? (y/N)" ).lower():
-      print("One second = {sec}".format(sec=midi.ticks_per_beat * midi.bpm / 60))
+      print("One second = {sec}".format(sec=midi.ticks_per_beat * midi.bpm() / 60))
       inp = input( "Slice from? [default: {min}, {minclock}] ".format( min=min_t, minclock=midi.tick_to_mmss( min_t ) ) )
       if inp:
          min_final = max( min_t, int( inp ) )
@@ -472,6 +472,8 @@ def get_vox_instrument(note: funmid.MidiNote) -> str:
       return 'newwarn'  # nsmb ba!
    elif patch in (118, 119):  # toms etc
       return 'd2'  # kick
+   elif patch in (120, 122, 123):  # reverse cymbal, breath, seashore
+      return 'defeatwarn>.4'  # gated white noise
    else:
       # idk there are 11 kk notes just use those
       return 'kk%d' % (1 + int( (patch - 80) / (48 / 11) ))
@@ -532,6 +534,8 @@ def get_vox_drums(note: int) -> str:
       return 'kk14-10'
    elif note == 56:  # cowbell
       return 'bonkwarn+8'
+   elif note == 55:  # splash cymbal
+      return 'defeatwarn+6'
    elif note in (50, 48, 47, 45, 43, 41):  # toms
       return 'd2+%d' % (5 + (note - 40) / 2)
    elif note in (40, 38):  # snares
@@ -641,13 +645,13 @@ def main(filename=r"ta-poochie.mid", gofast=False):
 
    # do some sanity checkin'
    min_note_length = int( 4 * (midi.ticks_per_beat / tick_quantize) )
-   default_bpm = midi.bpm
+   default_bpm = midi.bpm()
    if min_note_length > 32:
-      default_bpm = int( midi.bpm * (min_note_length / 32) )
+      default_bpm = int( midi.bpm() * (min_note_length / 32) )
       min_note_length = 32
-      print( "Notes are too short, increasing bpm to {bpm}".format( bpm=midi.bpm ) )
+      print( "Notes are too short, increasing bpm to {bpm}".format( bpm=default_bpm ) )
    if default_bpm > 480:
-      tick_quantize = int( tick_quantize * (midi.bpm / 480) )
+      tick_quantize = int( tick_quantize * (midi.bpm() / 480) )
       default_bpm = 480
       print( "BPM too high, increasing tick quantization to {q}".format( q=tick_quantize ) )
 
@@ -656,10 +660,8 @@ def main(filename=r"ta-poochie.mid", gofast=False):
    bpm_info = [BPMChange(t, bpm) for (t, bpm) in midifile.get_bpms().items()]
    if not bpm_info:
       bpm_info = [BPMChange(0, default_bpm)]
-   # todo this is fragile (every note needs a valid t, this throws away ordering done by crunch)
-   # maybe do bpm in crunch/quant instead of here?
+   
    # noinspection PyTypeChecker
-   #final_seq = [bpm_info[0]] + sorted(final_notes + bpm_info[1:], key=lambda n: n.t)
    final_seq = [bpm_info[0]] + final_notes
    voxstr = build_voxstr( final_seq, min_note_length )
 
@@ -669,8 +671,8 @@ def main(filename=r"ta-poochie.mid", gofast=False):
 if __name__ == "__main__":
    if len( sys.argv ) == 2:
       _fn = sys.argv[1]
+      _gofast = True
    else:
       _fn = input( "filename pls" ).strip( '"' )
-   _wee = main( _fn, gofast=False )
-   with open( r"C:\tmp\vox.txt", "w" ) as _f:
-      _f.write( _wee + '\n' )
+      _gofast = False
+   print( main( _fn, gofast=_gofast ) )

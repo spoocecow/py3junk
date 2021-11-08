@@ -177,9 +177,14 @@ class SimplyNotes:
 
         self.__cleanup()
 
-    @property
-    def bpm(self):
-        return sorted(self.bpm_info)[0]
+    def bpm(self, t=0):
+        """Get the BPM at the specified time (default 0)"""
+        last_t = 0
+        for ts, bpm in sorted(self.bpm_info.items()):
+            if last_t <= t <= ts:
+                return bpm
+            last_t = ts
+        return self.bpm_info[0]
 
     def __cleanup(self):
         # clean up track names for presentation later
@@ -229,8 +234,9 @@ class SimplyNotes:
 
     def tick_to_mmss(self, tick: int) -> str:
         beats = tick / self.ticks_per_beat
-        mins = int(beats // self.bpm)
-        secs = int(((beats % self.bpm) / self.bpm) * 60)
+        bpm = self.bpm()
+        mins = int(beats // bpm)
+        secs = int(((beats % bpm) / bpm) * 60)
         return '{:02d}:{:02d}'.format(mins, secs)
 
     def copy(self, **kwargs):
