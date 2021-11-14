@@ -333,6 +333,8 @@ def quantize_to_beat(notes: FlatNotes, quantize_to: int) -> funmid.Notes:
          # nothing playing
          next_note = funmid.MidiNote()  # empty/rest
          next_note.t = t
+         if last_note.is_rest():
+            next_note = last_note  # reuse the rest with proper t
 
       if not g_ChangeLengths:
          # just in case this fires too often or something
@@ -344,7 +346,7 @@ def quantize_to_beat(notes: FlatNotes, quantize_to: int) -> funmid.Notes:
          continue
 
       # is a note still playing from last tick?
-      if next_note is last_note:
+      if (next_note is last_note) or (next_note.is_rest() and last_note.is_rest()):
          # increment how long this note has been playing for
          len_change_stack += 1
          pass
@@ -352,16 +354,16 @@ def quantize_to_beat(notes: FlatNotes, quantize_to: int) -> funmid.Notes:
          if len_change_stack > 1:
             # new note after a long note
             # insert the length changes before last note, append length decs after last note
-            idx = final.index(last_note)
+            idx = final.index(last_note) if final else 0
             stack = len_change_stack
+            added = 0
             while stack > 1:
                final.insert( idx, LengthChange(t, LengthChange.INC) )
+               added += 1
                stack /= 2
-            idx = final.index(last_note)
-            stack = len_change_stack
-            while stack > 1:
+            idx += added
+            for i in range(added):
                final.insert( idx+1, LengthChange(t, LengthChange.DEC) )
-               stack /= 2
             if stack != 1:
                # there was an extra beat (e.g. dotted note) that didn't quite fit
                extra = funmid.MidiNote()
@@ -374,8 +376,8 @@ def quantize_to_beat(notes: FlatNotes, quantize_to: int) -> funmid.Notes:
 
          final.append(next_note)
          # can stop considering last note in pool
-         if last_note in final and last_note.t in pool:
-            pool.pop(last_note.t)
+         #if last_note in final and last_note.t in pool:
+         #   pool.pop(last_note.t)
 
       last_note = next_note
       t += quantize_to
@@ -550,6 +552,8 @@ def get_vox_drums(note: int) -> str:
       return 'hl_crowbar'
    elif note == 33:  # metronome tick
       return 'gmod_ragdoll'  # lol
+   elif note == 32:  # square click
+      return 'gmod_wood'  # ehehehh
    elif note == 31:  # sticks
       return 'kk13'
    elif note == 30:  # scratch pull
@@ -627,6 +631,10 @@ def build_voxstr(notes: funmid.Notes, note_len: int) -> str:
 
 def main(filename=r"ta-poochie.mid", gofast=False):
    logging.basicConfig( level=logging.INFO )
+   if filename.startswith('file://'):
+      from urllib.parse import unquote, urlparse
+      filename = unquote( urlparse(filename).path )
+      filename = filename.lstrip('/')
    midifile = funmid.MidiFile( filename )
    midi = midifile.to_simplynotes()
 
@@ -660,7 +668,7 @@ def main(filename=r"ta-poochie.mid", gofast=False):
    bpm_info = [BPMChange(t, bpm) for (t, bpm) in midifile.get_bpms().items()]
    if not bpm_info:
       bpm_info = [BPMChange(0, default_bpm)]
-   
+
    # noinspection PyTypeChecker
    final_seq = [bpm_info[0]] + final_notes
    voxstr = build_voxstr( final_seq, min_note_length )
