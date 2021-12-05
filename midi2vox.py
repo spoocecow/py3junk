@@ -8,6 +8,7 @@ import functools
 import logging
 import math
 import sys
+import random
 from typing import List, Dict, Any, Tuple
 import funmid
 
@@ -18,6 +19,7 @@ MAX_VOXSTR_LEN = 500
 MAX_NOTES = MAX_VOXSTR_LEN * 2
 
 g_ChangeLengths = True
+g_GrimeFactor = 10
 
 
 class LengthChange(funmid.MidiNote):
@@ -123,6 +125,7 @@ def prompt_for_resolution(midi: funmid.SimplyNotes, selected_tracks: List[int]) 
    Get tick resolution from user.
    """
    gcds = defaultdict( int )
+   print("Default q: {}".format(midi.ticks_per_beat / 4))
    for track_i, track in sorted( midi.by_track().items() ):
       if track_i not in selected_tracks:
          continue
@@ -375,9 +378,6 @@ def quantize_to_beat(notes: FlatNotes, quantize_to: int) -> funmid.Notes:
             pass
 
          final.append(next_note)
-         # can stop considering last note in pool
-         #if last_note in final and last_note.t in pool:
-         #   pool.pop(last_note.t)
 
       last_note = next_note
       t += quantize_to
@@ -418,6 +418,9 @@ def crunch(midi: funmid.SimplyNotes, track_priority: List[int], tick_quantize: i
          last_t = nt
    return quant
 
+use_hev = random.randint(1,100)
+if use_hev < (g_GrimeFactor/2):
+   print("** GRIME FACTOR ENABLED **")
 
 def get_vox_instrument(note: funmid.MidiNote) -> str:
    """Convert a general midi patch to a vox instrument"""
@@ -435,9 +438,15 @@ def get_vox_instrument(note: funmid.MidiNote) -> str:
    elif patch <= 27:  # acoustic guitar
       return 'n8'  # dantnote
    elif patch == 30:  # overdriven guitar
-      return 'hl_hev>.25'  # medium fuzz
+      if use_hev < g_GrimeFactor:
+         return 'hl_hev>.25'  # medium fuzz
+      else:
+         return 'n7'  # bupnote
    elif patch == 31:  # distortion guitar
-      return 'hl_hev>.5'  # LOUD fuzz
+      if use_hev < (g_GrimeFactor/2):
+         return 'hl_hev>.5'  # LOUD fuzz
+      else:
+         return 'n4'  # dootnote
    elif patch <= 32:  # electric guitar
       return 'n4'  # dootnote
    elif patch <= 40:  # bass
